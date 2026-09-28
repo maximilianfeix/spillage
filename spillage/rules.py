@@ -19,7 +19,7 @@ import re
 import zlib
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, Optional, Sequence
+from typing import Callable, Dict, Iterator, Optional, Sequence
 
 from .models import Severity
 
@@ -183,6 +183,9 @@ class Rule:
 
     def severity_for(self, secret: str) -> Severity:
         return self.severity
+
+    def name_for(self, secret: str) -> str:
+        return self.name
 
 
 class StripeRule(Rule):
@@ -619,6 +622,62 @@ def _mixed(value: str) -> bool:
         (any(c.islower() for c in value), any(c.isupper() for c in value), any(c.isdigit() for c in value))
     )
     return classes >= 2 and any(c.isdigit() for c in value)
+
+
+class KnownValueRule(Rule):
+    """Exact values you already know are secret, e.g. from your projects' .env files.
+
+    They are looked up with str.find, raw and in their JSON-escaped form, so a password with a
+    quote in it is found inside a JSONL log too. Findings are named after the variable, never
+    shown in full."""
+
+    def __init__(self, values: Dict[str, str]) -> None:
+        super().__init__("env-value", "Value from a .env file", "Your .env", r"(?!)", Severity.HIGH)
+        self.values = dict(values)  # value -> label
+        self._needles: Dict[str, str] = {}
+        for value in self.values:
+            self._needles[value] = value
+            escaped = json.dumps(value, ensure_ascii=False)[1:-1]
+            if escaped != value:
+                self._needles[escaped] = value
+
+    def find(self, text: str) -> Iterator[Match]:
+        for needle in self._needles:
+            pos = text.find(needle)
+            while pos != -1:
+                end = pos + len(needle)
+                left_ok = needle[0] not in _TOKEN_CHARS or left_boundary_ok(text, pos)
+                right_ok = end >= len(text) or needle[-1] not in _TOKEN_CHARS or text[end] not in _TOKEN_CHARS
+                if left_ok and right_ok:
+                    yield Match(needle, pos, end)
+                pos = text.find(needle, pos + 1)
+
+    def name_for(self, secret: str) -> str:
+        label = self.values.get(secret)
+        return f"Value of {label}" if label else self.name
+
+
+_BY_ID = {r.id: r for r in BUILTIN_RULES}
+
+
+def rule_spec(rules: Sequence[Rule]) -> tuple:
+    """A picklable description of a rule list, for worker processes."""
+    return tuple(
+        ("env-value", tuple(sorted(r.values.items()))) if isinstance(r, KnownValueRule) else r.id for r in rules
+    )
+
+
+def rules_from_spec(spec: tuple) -> list:
+    return [KnownValueRule(dict(item[1])) if isinstance(item, tuple) else _BY_ID[item] for item in spec]
+
+
+def with_known_values(rules: Sequence[Rule], values: Dict[str, str]) -> list:
+    """Insert a KnownValueRule after the specific rules and before the generic one."""
+    rules = [r for r in rules if not isinstance(r, KnownValueRule)]
+    if not values:
+        return rules
+    at = next((i for i, r in enumerate(rules) if r.id == "generic-secret"), len(rules))
+    return rules[:at] + [KnownValueRule(values)] + rules[at:]
 
 
 def get_rules(only: Optional[Sequence[str]] = None, exclude: Optional[Sequence[str]] = None) -> list:

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .models import Finding, Location, Severity, fingerprint
-from .rules import Match, Rule, get_rules
+from .rules import Match, Rule, get_rules, rule_spec, rules_from_spec
 from .sources import Source
 
 ProgressFn = Callable[[int, int, str], None]  # jobs done, jobs total, current agent
@@ -148,10 +148,10 @@ def scan_file(source: Source, path: Path, rules: Sequence[Rule], part: int = 0, 
 Job = Tuple[Source, Path, int, int]
 
 
-def _scan_job(args: Tuple[Job, List[str]]) -> Tuple[List[Hit], List[str], str]:
-    (source, path, part, parts), rule_ids = args
+def _scan_job(args: Tuple[Job, tuple]) -> Tuple[List[Hit], List[str], str]:
+    (source, path, part, parts), spec = args
     try:
-        return scan_file(source, path, _rules_for(tuple(rule_ids)), part, parts), [], source.name
+        return scan_file(source, path, _rules_for(spec), part, parts), [], source.name
     except Exception as exc:  # one broken file must not end the scan
         return [], [f"{path}: {exc}"], source.name
 
@@ -159,10 +159,11 @@ def _scan_job(args: Tuple[Job, List[str]]) -> Tuple[List[Hit], List[str], str]:
 _RULE_CACHE: Dict[tuple, list] = {}
 
 
-def _rules_for(rule_ids: tuple) -> list:
-    if rule_ids not in _RULE_CACHE:
-        _RULE_CACHE[rule_ids] = get_rules(only=list(rule_ids))
-    return _RULE_CACHE[rule_ids]
+def _rules_for(spec: tuple) -> list:
+    if spec not in _RULE_CACHE:
+        _RULE_CACHE.clear()
+        _RULE_CACHE[spec] = rules_from_spec(spec)
+    return _RULE_CACHE[spec]
 
 
 class Scanner:
@@ -210,7 +211,7 @@ class Scanner:
 
     def _run(self, jobs: List[Tuple[Source, Path, int]], stats: ScanStats) -> List[Hit]:
         workers = self.workers if self.workers is not None else min(8, os.cpu_count() or 1)
-        rule_ids = [r.id for r in self.rules]
+        rule_ids = rule_spec(self.rules)
         parallel = workers > 1 and stats.bytes >= PARALLEL_THRESHOLD and len(jobs) >= 2
         units: List[Job] = []
         # Biggest first, so the long jobs start early and the small ones fill the gaps.
@@ -250,7 +251,7 @@ class Scanner:
                 rule = rules[rule_id]
                 finding = found[fp] = Finding(
                     rule_id=rule.id,
-                    rule_name=rule.name,
+                    rule_name=rule.name_for(secret),
                     provider=rule.provider,
                     severity=rule.severity_for(secret),
                     secret=secret,
@@ -276,8 +277,9 @@ def scan_text(text: str, rules: Optional[Sequence[Rule]] = None) -> List[Finding
         fp = fingerprint(match.secret)
         if fp not in found:
             rule = by_id[rule.id]
+            secret = match.secret
             found[fp] = Finding(
-                rule.id, rule.name, rule.provider, rule.severity_for(match.secret), match.secret, rule.rotate_url
+                rule.id, rule.name_for(secret), rule.provider, rule.severity_for(secret), secret, rule.rotate_url
             )
     return sorted(found.values(), key=lambda f: -f.severity)
 

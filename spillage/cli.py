@@ -52,6 +52,8 @@ def _add_scan_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rules", type=_csv, metavar="IDS", help="only these rules")
     parser.add_argument("--skip-rules", type=_csv, metavar="IDS", help="leave out these rules")
     parser.add_argument("--workers", type=int, metavar="N", help="parallel processes (default: up to 8)")
+    parser.add_argument("--no-env", action="store_true",
+                        help="don't look for the values from your projects' .env files")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -149,8 +151,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 130
 
 
+def build_rules(args: argparse.Namespace) -> list:
+    """Built-in rules, plus the exact values from the .env files of your projects."""
+    rules = get_rules(only=getattr(args, "rules", None), exclude=getattr(args, "skip_rules", None))
+    if getattr(args, "no_env", False) or getattr(args, "rules", None):
+        return rules
+    from .envfiles import collect
+    from .rules import with_known_values
+    from .sources import known_projects
+
+    return with_known_values(rules, collect(known_projects(Path.home())))
+
+
 def run_scan(args: argparse.Namespace, progress: Optional[Progress] = None) -> ScanResult:
-    rules = get_rules(only=args.rules, exclude=args.skip_rules)
+    rules = build_rules(args)
     sources = build_sources(args.agent, args.path)
     scanner = Scanner(
         rules=rules,
@@ -204,7 +218,7 @@ def cmd_scrub(args: argparse.Namespace) -> int:
         if answer.strip().lower() not in ("y", "yes"):
             print("  Nothing changed.")
             return EXIT_CLEAN
-    report = scrub(findings, rules=get_rules(only=args.rules, exclude=args.skip_rules),
+    report = scrub(findings, rules=build_rules(args),
                    dry_run=args.dry_run, include_active=args.include_active)
     verb = "Would redact" if args.dry_run else "Redacted"
     print(f"  {p('✓', 'green')} {verb} {report.replacements} occurrences in {len(report.files_changed)} files.")
@@ -278,7 +292,7 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
     from .watch import Watcher, notify
 
     p = Painter(supports_color(sys.stdout))
-    watcher = Watcher(build_sources(args.agent), ignore=load_ignore(),
+    watcher = Watcher(build_sources(args.agent), rules=build_rules(args), ignore=load_ignore(),
                       scrub_after=args.quiet if args.scrub else None)
     count = watcher.prime()
     mode = f", scrubbing files {args.quiet:.0f}s after they go quiet" if args.scrub else ""

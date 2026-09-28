@@ -126,6 +126,8 @@ Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, whic
 | **Payments and SaaS** | Stripe (live is critical, test is low), Slack tokens and webhooks, Discord bot tokens and webhooks, Telegram bots, SendGrid, Brevo, Twilio, Shopify, Linear, Notion, Sentry, Grafana, Postman, Atlassian, Figma |
 | **Everything else** | private keys (RSA, EC, OpenSSH, PGP, …), database URLs with a password in them, JWTs (Supabase `anon` keys count as low), and `API_KEY=…` / `"client_secret": "…"` / `Bearer …` with a high-entropy value |
 
+**Plus your own secrets.** Patterns can't recognise a random database password or an Azure key. So spillage also reads the `.env` files in your projects (the current folder and every folder your agent sessions ran in), takes the values of anything named like a key, token, secret or password, and looks for those exact strings in the logs. They show up as *Value of POSTGRES_PASSWORD from ~/code/shop/.env*, never with the value itself. `--no-env` turns that off; the `.env` files are only read, never changed.
+
 `spillage rules` lists them with their ids. Leave some out with `--skip-rules jwt,generic-secret`.
 
 <a id="commands"></a>
