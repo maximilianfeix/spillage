@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-09-28
 
 ### Added
 - Qwen Code, Goose (SQLite and JSONL sessions) and Crush (per-project SQLite). SQLite databases are read with one generic, read-only reader
