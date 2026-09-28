@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-09-28
 
 ### Changed
 - Big session files are cut into parts at line breaks and scanned on several cores, and jobs run biggest first. 244 MB of real logs with a 109 MB session in it: 9.4 s → 3.4 s
