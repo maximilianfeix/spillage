@@ -135,12 +135,17 @@ def scan_file(source: Source, path: Path, rules: Sequence[Rule], part: int = 0, 
             return []
         text = loaded
         doc = source.document(path, text)
-    hits: List[Hit] = []
+    return [(rule.id, secret, location) for rule, secret, location in hits_in(doc, text, rules)]
+
+
+def hits_in(doc, text: str, rules: Sequence[Rule]) -> List[Tuple[Rule, str, Location]]:
+    """(rule, secret, location) for every match in `text`, which `doc` describes."""
+    hits = []
     for rule, match in find_in_text(text, rules):
         secret = doc.decode(match.secret)
         location = doc.locate(match.start, secret)
         if location is not None:
-            hits.append((rule.id, secret, location))
+            hits.append((rule, secret, location))
     return hits
 
 

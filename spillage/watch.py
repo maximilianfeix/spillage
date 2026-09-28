@@ -1,8 +1,13 @@
 """Watch agent logs and report secrets the moment they land.
 
-Polling, not fsevents/inotify: it keeps spillage dependency-free, and a stat() per log file
-every couple of seconds is cheap. Appended JSONL is read from where the last look stopped,
-other files are rescanned when they change. Each secret is reported once per run.
+Polling, not fsevents/inotify: it keeps spillage dependency-free. Each round is a stat() per
+known log file; the list of files is refreshed every 5 seconds (60 for the agents whose logs
+live in project folders). Appended JSONL is read
+from where the last look stopped, other files (JSON, Markdown, SQLite) are rescanned when they
+change.
+
+"New" means new since `watch` started: a baseline scan at startup records every secret already
+in the logs, and those are never reported again. That's `spillage scan`'s job.
 """
 
 from __future__ import annotations
@@ -17,9 +22,12 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tupl
 
 from .models import Finding, Location, fingerprint
 from .rules import Rule, get_rules
-from .scanner import find_in_text
+from .scanner import Scanner, _lines_before, hits_in
 from .scrub import scrub_file
 from .sources import Source
+
+TAIL = 64  # bytes before the read offset that must stay the same, or the file was rewritten
+NOT_SCRUBBABLE = (".vscdb", ".db")
 
 
 @dataclass
@@ -30,11 +38,41 @@ class Event:
 
 @dataclass
 class _FileState:
-    offset: int = 0  # bytes of JSONL already scanned
-    mtime: float = 0.0
+    source: Source
+    ino: int = 0
     size: int = 0
-    lines: int = 0  # line breaks before `offset`
-    first_line: Optional[str] = None
+    mtime: float = 0.0
+    offset: int = 0  # JSONL: bytes already scanned, always at a line break
+    tail: bytes = b""  # JSONL: the bytes right before `offset`
+    lines: Optional[int] = None  # line breaks before `offset`, counted when first needed
+    first_line: Optional[str] = None  # only set once it's complete
+
+
+def _last_line_end(path: Path, size: int) -> int:
+    """Offset just past the last line break, so a half-written last line is read later."""
+    with open(path, "rb") as fh:
+        pos = size
+        while pos > 0:
+            start = max(0, pos - 65536)
+            fh.seek(start)
+            block = fh.read(pos - start)
+            nl = block.rfind(b"\n")
+            if nl != -1:
+                return start + nl + 1
+            pos = start
+    return 0
+
+
+def _read_range(path: Path, start: int, end: int) -> bytes:
+    with open(path, "rb") as fh:
+        fh.seek(start)
+        return fh.read(max(0, end - start))
+
+
+def _first_line(path: Path) -> Optional[str]:
+    with open(path, "rb") as fh:
+        line = fh.readline()
+    return line.decode("utf-8", errors="replace") if line.endswith(b"\n") else None
 
 
 @dataclass
@@ -44,135 +82,152 @@ class Watcher:
     ignore: Set[str] = field(default_factory=set)
     scrub_after: Optional[float] = None  # seconds a file must be quiet before it's scrubbed
     clock: Callable[[], float] = time.time
+    rediscover: float = 5.0  # seconds between refreshing the list of log files
+    rediscover_slow: float = 60.0  # the same for sources that have to search project folders
+    baseline: Set[str] = field(default_factory=set)  # secrets already there at startup
     files: Dict[Path, _FileState] = field(default_factory=dict)
-    seen: Set[str] = field(default_factory=set)
-    pending: Dict[Path, float] = field(default_factory=dict)  # file -> when it last had a new secret
+    reported: Set[str] = field(default_factory=set)
+    pending: Dict[Path, float] = field(default_factory=dict)  # file -> when it last got a new secret
+    errors: List[str] = field(default_factory=list)
+    _paths: Dict[int, List[Path]] = field(default_factory=dict)
+    _discovered_at: Dict[int, float] = field(default_factory=dict)
 
-    def prime(self) -> int:
-        """Remember where every file is now, so only new writes get reported."""
-        for _source, path in self._discover():
+    # ---- startup ----------------------------------------------------------------------------
+    def prime(self, baseline: bool = True) -> int:
+        """Remember what's there now: every secret already in the logs, and where each file ends."""
+        if baseline:
+            result = Scanner(rules=self.rules).scan(self.sources)
+            self.baseline = {f.fingerprint for f in result.findings}
+        for source, path in self._discover(force=True):
             try:
-                st = path.stat()
+                self.files[path] = self._state_now(source, path)
             except OSError:
                 continue
-            state = _FileState(offset=st.st_size, mtime=st.st_mtime, size=st.st_size)
-            if path.suffix == ".jsonl":
-                state.lines, state.first_line = _count_lines(path, st.st_size)
-            self.files[path] = state
         return len(self.files)
 
-    def _discover(self) -> Iterable[Tuple[Source, Path]]:
-        for source in self.sources:
-            for path in source.discover():
-                yield source, path
+    def _state_now(self, source: Source, path: Path) -> _FileState:
+        st = path.stat()
+        state = _FileState(source, st.st_ino, st.st_size, st.st_mtime)
+        if path.suffix == ".jsonl":
+            state.offset = _last_line_end(path, st.st_size)
+            state.tail = _read_range(path, max(0, state.offset - TAIL), state.offset)
+            state.first_line = _first_line(path)
+        return state
 
+    def _discover(self, force: bool = False) -> List[Tuple[Source, Path]]:
+        """Cached file lists. Sources that look through project folders (Aider, SpecStory,
+        Crush) read the head of every session to find them, so they refresh less often."""
+        from .sources import Crush, ProjectSource
+
+        now = self.clock()
+        out = []
+        for i, source in enumerate(self.sources):
+            every = self.rediscover_slow if isinstance(source, (ProjectSource, Crush)) else self.rediscover
+            last = self._discovered_at.get(i)
+            if force or last is None or now - last >= every:
+                self._paths[i] = list(source.discover())
+                self._discovered_at[i] = now
+            out += [(source, p) for p in self._paths[i]]
+        return out
+
+    # ---- polling ----------------------------------------------------------------------------
     def tick(self) -> List[Event]:
         events: List[Event] = []
         for source, path in self._discover():
             try:
-                st = path.stat()
-            except OSError:
-                continue
-            state = self.files.get(path)
-            if state is None:
-                state = self.files[path] = _FileState()
-            if st.st_mtime == state.mtime and st.st_size == state.size:
-                continue
-            if path.suffix == ".jsonl":
-                events += self._read_appended(source, path, state, st.st_size)
-            else:
-                events += self._rescan(source, path)
-            state.mtime, state.size = st.st_mtime, st.st_size
-        if events:
-            now = self.clock()
-            for event in events:
-                self.pending[Path(event.location.file)] = now
+                events += self._check(source, path)
+            except (OSError, ValueError) as exc:  # vanished, locked, half-written: try again next round
+                self.errors.append(f"{path}: {exc}")
         return events
 
+    def _check(self, source: Source, path: Path) -> List[Event]:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            self.files.pop(path, None)
+            return []
+        state = self.files.get(path)
+        if state is None:
+            state = self.files[path] = _FileState(source)
+        if (st.st_ino, st.st_size, st.st_mtime) == (state.ino, state.size, state.mtime):
+            return []
+        if path.suffix == ".jsonl":
+            hits = self._appended(source, path, state, st.st_ino, st.st_size)
+        else:
+            text = source.load(path)
+            hits = hits_in(source.document(path, text), text, self.rules) if text else []
+        state.ino, state.size, state.mtime = st.st_ino, st.st_size, st.st_mtime
+        return self._events(path, hits)
+
+    def _appended(self, source: Source, path: Path, state: _FileState, ino: int, size: int) -> list:
+        rewritten = (
+            (state.ino and ino != state.ino)
+            or size < state.offset
+            or (state.tail and _read_range(path, state.offset - len(state.tail), state.offset) != state.tail)
+        )
+        if rewritten:  # scrubbed, truncated or replaced: read it again from the top
+            state.offset, state.tail, state.lines, state.first_line = 0, b"", 0, None
+        data = _read_range(path, state.offset, size)
+        cut = data.rfind(b"\n") + 1  # leave a half-written last line for next time
+        if not cut:
+            return []
+        chunk = data[:cut]
+        if state.first_line is None:
+            state.first_line = _first_line(path)
+        if state.lines is None:
+            state.lines = _lines_before(path, state.offset)
+        text = chunk.decode("utf-8", errors="replace")
+        doc = source.document(path, text)
+        doc.first_line = state.first_line
+        doc.line_offset = state.lines
+        hits = hits_in(doc, text, self.rules)
+        state.offset += cut
+        state.lines += chunk.count(b"\n")
+        state.tail = (state.tail + chunk)[-TAIL:]
+        return hits
+
+    def _events(self, path: Path, hits: Iterable) -> List[Event]:
+        events = []
+        for rule, secret, location in hits:
+            fp = fingerprint(secret)
+            if fp in self.ignore or fp in self.baseline:
+                continue
+            self.pending[path] = self.clock()  # any file holding a new secret gets scrubbed
+            if fp in self.reported:
+                continue
+            self.reported.add(fp)
+            finding = Finding(rule.id, rule.name_for(secret), rule.provider, rule.severity_for(secret), secret,
+                              rule.rotate_url, [location])
+            events.append(Event(finding, location))
+        return events
+
+    # ---- scrubbing --------------------------------------------------------------------------
     def scrub_quiet(self) -> List[Tuple[Path, int]]:
-        """Scrub files that had a new secret and haven't changed for `scrub_after` seconds."""
+        """Scrub files that got a new secret and haven't changed for `scrub_after` seconds.
+
+        Written in place, not replaced: an agent that still holds the file open keeps writing
+        into the same file instead of an unlinked copy."""
         if self.scrub_after is None:
             return []
         done = []
         now = self.clock()
         for path, stamp in list(self.pending.items()):
             state = self.files.get(path)
-            last_write = max(stamp, state.mtime if state else 0)
-            if now - last_write < self.scrub_after:
+            if now - max(stamp, state.mtime if state else 0) < self.scrub_after:
                 continue
             del self.pending[path]
-            if path.suffix == ".vscdb":
+            if path.suffix in NOT_SCRUBBABLE:
                 continue
             try:
-                count = scrub_file(path, ignore=self.ignore, rules=self.rules)
-            except OSError:
+                count = scrub_file(path, ignore=self.ignore, rules=self.rules, in_place=True)
+                if count and state:
+                    self.files[path] = self._state_now(state.source, path)
+            except (OSError, ValueError) as exc:
+                self.errors.append(f"{path}: {exc}")
                 continue
             if count:
-                st = path.stat()
-                if state:
-                    state.mtime, state.size, state.offset = st.st_mtime, st.st_size, st.st_size
-                    state.lines, _ = _count_lines(path, st.st_size)
                 done.append((path, count))
         return done
-
-    def _read_appended(self, source: Source, path: Path, state: _FileState, size: int) -> List[Event]:
-        if size < state.offset:  # rewritten or truncated: start over
-            state.offset, state.lines, state.first_line = 0, 0, None
-        with open(path, "rb") as fh:
-            if state.first_line is None:
-                state.first_line = fh.readline().decode("utf-8", errors="replace")
-            fh.seek(state.offset)
-            data = fh.read(size - state.offset)
-        cut = data.rfind(b"\n") + 1  # leave a half-written last line for next time
-        if not cut:
-            return []
-        chunk = data[:cut]
-        text = chunk.decode("utf-8", errors="replace")
-        doc = source.document(path, text)
-        doc.first_line = state.first_line
-        doc.line_offset = state.lines
-        events = self._events(doc, text)
-        state.offset += cut
-        state.lines += chunk.count(b"\n")
-        return events
-
-    def _rescan(self, source: Source, path: Path) -> List[Event]:
-        text = source.load(path)
-        if not text:
-            return []
-        return self._events(source.document(path, text), text)
-
-    def _events(self, doc, text: str) -> List[Event]:
-        events = []
-        for rule, match in find_in_text(text, self.rules):
-            secret = doc.decode(match.secret)
-            fp = fingerprint(secret)
-            if fp in self.seen or fp in self.ignore:
-                continue
-            location = doc.locate(match.start, secret)
-            if location is None:
-                continue
-            self.seen.add(fp)
-            finding = Finding(rule.id, rule.name_for(secret), rule.provider, rule.severity_for(secret), secret,
-                              rule.rotate_url, [location])
-            events.append(Event(finding, location))
-        return events
-
-
-def _count_lines(path: Path, size: int) -> Tuple[int, Optional[str]]:
-    count = 0
-    first = None
-    with open(path, "rb") as fh:
-        first = fh.readline().decode("utf-8", errors="replace")
-        fh.seek(0)
-        remaining = size
-        while remaining > 0:
-            block = fh.read(min(remaining, 8 * 1024 * 1024))
-            if not block:
-                break
-            count += block.count(b"\n")
-            remaining -= len(block)
-    return count, first
 
 
 def notify(title: str, message: str) -> bool:
