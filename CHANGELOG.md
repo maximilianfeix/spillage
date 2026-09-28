@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-09-28
 
 ### Added
 - `spillage watch`: follows every agent's logs, reports new secrets within seconds with a desktop notification, `--scrub` cleans a file once it has been quiet for a while
