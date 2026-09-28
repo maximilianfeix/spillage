@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
@@ -121,6 +122,13 @@ class Source:
     def text_origin(self, path: Path) -> str:
         return Origin.OTHER
 
+    def text_origin_at(self, path: Path, text: str, offset: int) -> str:
+        """Origin of a match in a plain text file. Markdown chat logs override this."""
+        return self.text_origin(path)
+
+    def project_for(self, path: Path) -> str:
+        return ""
+
     def session_for(self, path: Path, state: dict) -> str:
         return state.get("session") or path.stem
 
@@ -171,8 +179,8 @@ class Document:
             return self._locate_jsonl(start, lineno, secret)
         if self.kind == "json":
             return self._locate_json(lineno, secret)
-        state = {"session": "", "project": ""}
-        return self._location(lineno, (), self.source.text_origin(self.path), state, "")
+        state = {"session": "", "project": self.source.project_for(self.path)}
+        return self._location(lineno, (), self.source.text_origin_at(self.path, self.text, start), state, "")
 
     def _locate_jsonl(self, start: int, lineno: int, secret: str) -> Optional[Location]:
         begin = self.text.rfind("\n", 0, start) + 1
@@ -590,6 +598,92 @@ def _cursor_line(key: Any, value: Any) -> str:
         # Cursor's own per-chat encryption keys, not something anyone leaked
         parsed = {k: v for k, v in parsed.items() if not str(k).endswith("EncryptionKey")}
     return json.dumps({"key": str(key), "value": parsed}, ensure_ascii=False)
+
+
+# ---- agents that write their logs into the project folder --------------------------------------
+
+def known_projects(home: Path) -> List[Path]:
+    """Project folders worth checking: the current one, plus every working directory that
+    Claude Code and Codex sessions mention. Only the first few KB of each session are read."""
+    found = {Path.cwd()}
+    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude") / "projects"
+    codex = Path(os.environ.get("CODEX_HOME") or home / ".codex") / "sessions"
+    candidates = list(claude.glob("*/*.jsonl")) + list(codex.glob("**/*.jsonl"))
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                head = fh.read(16384)
+        except OSError:
+            continue
+        for m in re.finditer(r'"cwd"\s*:\s*"((?:[^"\\]|\\.)+)"', head):
+            try:
+                found.add(Path(json.loads('"' + m.group(1) + '"')))
+            except ValueError:
+                pass
+            break
+    return sorted(p for p in found if p.is_dir())
+
+
+class ProjectSource(Source):
+    """Logs that live inside project folders instead of the home directory."""
+
+    def roots(self) -> List[Path]:
+        return known_projects(self.home)
+
+    def project_for(self, path: Path) -> str:
+        for parent in path.parents:
+            if any((parent / marker).exists() for marker in self.patterns if "/" not in marker):
+                return str(parent)
+            if parent.name == ".specstory":
+                return str(parent.parent)
+        return str(path.parent)
+
+
+_AIDER_USER = re.compile(r"^#### ", re.M)
+_AIDER_TOOL = re.compile(r"^> ", re.M)
+
+
+@register
+class Aider(ProjectSource):
+    name = "aider"
+    label = "Aider"
+    patterns = (".aider.chat.history.md", ".aider.input.history")
+
+    def text_origin_at(self, path: Path, text: str, offset: int) -> str:
+        if path.name == ".aider.input.history":
+            return Origin.HISTORY
+        line_start = text.rfind("\n", 0, offset) + 1
+        line = text[line_start : line_start + 5]
+        if line.startswith("#### "):
+            return Origin.PROMPT
+        if line.startswith(">"):
+            return Origin.TOOL  # aider quotes command output and file contents with >
+        return Origin.ASSISTANT
+
+
+_SPECSTORY_ROLE = re.compile(r"^_\*\*(User|Assistant|Agent)[^*]*\*\*_", re.M)
+
+
+@register
+class SpecStory(ProjectSource):
+    name = "specstory"
+    label = "SpecStory"
+    patterns = (".specstory/history/*.md",)
+
+    def text_origin_at(self, path: Path, text: str, offset: int) -> str:
+        role = ""
+        for m in _SPECSTORY_ROLE.finditer(text, 0, offset):
+            role = m.group(1)
+        if role == "User":
+            return Origin.PROMPT
+        if role:
+            before = text.rfind("<details>", 0, offset)
+            closed = text.rfind("</details>", 0, offset)
+            return Origin.TOOL if before > closed else Origin.ASSISTANT
+        return Origin.OTHER
+
+    def session_for(self, path: Path, state: dict) -> str:
+        return path.stem
 
 
 class PathSource(Source):
