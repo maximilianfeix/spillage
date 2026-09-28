@@ -14,7 +14,15 @@ from .reporters import agent_label, reporter
 from .scanner import ScanResult
 from .term import human_bytes
 
-_TEMPLATE = Path(__file__).with_name("assets") / "report.html"
+
+def _template() -> str:
+    """Through importlib.resources, so it also works from a zipped install."""
+    try:
+        from importlib.resources import files
+
+        return (files("spillage") / "assets" / "report.html").read_text(encoding="utf-8")
+    except (ImportError, AttributeError):  # pragma: no cover
+        return (Path(__file__).with_name("assets") / "report.html").read_text(encoding="utf-8")
 
 
 @reporter("html")
@@ -26,7 +34,10 @@ def render_html(result: ScanResult, **_) -> str:
     data["size"] = human_bytes(result.stats.bytes)
     data["agents"] = [agent_label(a) for a in result.stats.per_agent]
     data["labels"] = {a: agent_label(a) for f in result.findings for a in f.agents}
-    # "</" inside a <script> block would end it early; JSON allows escaping the slash.
-    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    template = _TEMPLATE.read_text(encoding="utf-8")
+    # No raw "<", ">" or "&" inside the <script> block at all: "</script>" would end it and
+    # "<!--<script" would keep it from ending. ASCII-only also turns stray surrogates from
+    # odd file names into \\udcxx escapes instead of an encoding error.
+    payload = (json.dumps(data, ensure_ascii=True)
+               .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+    template = _template()
     return template.replace("__VERSION__", __version__).replace("__DATA__", payload)

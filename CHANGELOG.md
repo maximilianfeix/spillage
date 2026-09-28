@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.8] - 2026-09-28
+
+### Fixed
+- HTML report: a file path containing `<!--<script` could keep the data block from closing and leave a blank page; every `<`, `>` and `&` in the embedded data is escaped now
+- HTML report: one timestamp the browser can't parse broke the timeline and everything after it
+- HTML report: `-f html -o` crashed on file names with invalid UTF-8
+- HTML report: colors follow a light/dark switch while it's open, long lists don't wait seconds for their fade-in, and filtering toggles cards instead of rebuilding them on every keystroke
+- `render(result, "html")` works from Python without importing the CLI first, and the template loads from zipped installs too
+- a Codex session with `"cwd": null` no longer puts "null" into project names
+
 ## [0.6.7] - 2026-09-28
 
 ### Fixed

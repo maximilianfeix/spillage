@@ -102,9 +102,10 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
                   "file-snapshot": "File backups", "history": "Prompt history", "other": "Session metadata"};
   const app = document.getElementById("app");
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue("--" + name).trim();
-  const toast = (msg) => { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(() => t.classList.remove("on"), 1400); };
-  const copy = (text, msg) => { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast(msg), () => toast(text)); };
+  const css = (name) => `var(--${name})`;  // follows a theme switch, no style recalc
+  let toastTimer = 0;
+  const toast = (msg, ms = 1400) => { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), ms); };
+  const copy = (text, msg) => { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast(msg), () => toast(text, 6000)); };
 
   document.getElementById("meta").textContent =
     `${D.generated} · ${D.summary.files} files (${D.size}) from ${D.agents.join(", ") || "nothing"} · ${D.summary.seconds}s`;
@@ -144,7 +145,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
   app.append(hero);
 
   // ---- timeline ---------------------------------------------------------------------------
-  const dated = F.filter(f => f.first_seen);
+  const dated = F.filter(f => f.first_seen && Number.isFinite(Date.parse(f.first_seen)));
   if (dated.length) {
     const card = el("section", "card timeline"); card.append(el("h2", null, "When they leaked"));
     const ns = "http://www.w3.org/2000/svg";
@@ -153,7 +154,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
     if (hi - lo < 86400000) { lo -= 43200000; hi += 43200000; }
     const x = v => 20 + (v - lo) / (hi - lo) * 960;
     const axis = document.createElementNS(ns, "line"); axis.setAttribute("x1", 20); axis.setAttribute("x2", 980); axis.setAttribute("y1", 70); axis.setAttribute("y2", 70);
-    axis.setAttribute("stroke", css("line")); axis.setAttribute("stroke-width", 2); svg.append(axis);
+    axis.style.stroke = css("line"); axis.setAttribute("stroke-width", 2); svg.append(axis);
     [lo, (lo + hi) / 2, hi].forEach((v, i) => {
       const tx = document.createElementNS(ns, "text"); tx.setAttribute("x", x(v)); tx.setAttribute("y", 100);
       tx.setAttribute("text-anchor", ["start", "middle", "end"][i]); tx.textContent = new Date(v).toISOString().slice(0, 10); svg.append(tx);
@@ -161,7 +162,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
     dated.forEach((f, i) => {
       const c = document.createElementNS(ns, "circle"); const r = 5 + Math.min(9, Math.sqrt(f.occurrences) * 2);
       c.setAttribute("cx", x(Date.parse(f.first_seen))); c.setAttribute("cy", 70 - (i % 3) * 16); c.setAttribute("r", 0);
-      c.setAttribute("fill", css(f.severity)); c.setAttribute("fill-opacity", ".85");
+      c.style.fill = css(f.severity); c.setAttribute("fill-opacity", ".85");
       const title = document.createElementNS(ns, "title"); title.textContent = `${f.name} · ${f.masked} · ${f.first_seen.slice(0, 10)}`; c.append(title);
       svg.append(c);
       setTimeout(() => { c.style.transition = "r .6s cubic-bezier(.2,.8,.2,1)"; c.setAttribute("r", r); }, 300 + i * 60);
@@ -187,7 +188,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
   const list = el("section"); app.append(list);
 
   const card = (f, i) => {
-    const c = el("article", "finding"); c.style.setProperty("--sev", css(f.severity)); c.style.animationDelay = (i * 45) + "ms";
+    const c = el("article", "finding"); c.style.setProperty("--sev", css(f.severity)); c.style.animationDelay = animate ? (Math.min(i, 12) * 45) + "ms" : "0ms"; if (!animate) c.style.animation = "none", c.style.opacity = 1, c.style.transform = "none";
     const top = el("div", "top");
     const fp = el("button", "fp", f.fingerprint); fp.title = "Copy the ignore command"; fp.onclick = () => copy(`spillage ignore ${f.fingerprint}`, "Ignore command copied");
     top.append(el("span", "sev", f.severity), el("span", "name", f.name), el("code", "masked", f.masked), fp);
@@ -206,12 +207,20 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
     }
     return c;
   };
+  // Cards are built once; filtering only hides and shows them.
+  let animate = true;
+  const hays = F.map(f => [f.name, f.provider, f.masked, f.fingerprint, ...f.locations.map(l => l.file + " " + (l.project || ""))].join(" ").toLowerCase());
+  const cards = F.map((f, i) => card(f, i));
+  animate = false;
+  const empty = el("p", "legend", "Nothing matches.");
+  list.append(...cards, empty);
   const render = () => {
-    list.replaceChildren();
-    const hay = f => [f.name, f.provider, f.masked, f.fingerprint, ...f.locations.map(l => l.file + " " + l.project)].join(" ").toLowerCase();
-    F.filter(f => (!state.sev || f.severity === state.sev) && (!state.agent || f.agents.includes(state.agent)) && (!state.q || hay(f).includes(state.q)))
-     .forEach((f, i) => list.append(card(f, i)));
-    if (!list.children.length) list.append(el("p", "legend", "Nothing matches."));
+    let shown = 0;
+    F.forEach((f, i) => {
+      const on = (!state.sev || f.severity === state.sev) && (!state.agent || f.agents.includes(state.agent)) && (!state.q || hays[i].includes(state.q));
+      cards[i].hidden = !on; shown += on;
+    });
+    empty.hidden = shown > 0;
   };
   render();
 

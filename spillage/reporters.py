@@ -183,3 +183,7 @@ def render_markdown(result: ScanResult, **_) -> str:
         )
     out += ["", "Rotate first, then `spillage scrub` to remove them from disk.", ""]
     return "\n".join(out)
+
+
+# registered here so `render(result, "html")` works without importing the CLI first
+from . import html as _html  # noqa: E402,F401
