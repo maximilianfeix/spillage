@@ -51,8 +51,10 @@ def test_half_written_line_waits(home):
 
 
 def test_new_files_and_codex_session_meta(home):
-    w = Watcher(build_sources())
+    now = [0.0]
+    w = Watcher(build_sources(), clock=lambda: now[0])
     w.prime()
+    now[0] = 6
     key = fakes.stripe()
     home.codex_session(records=[{"type": "response_item", "payload": {"type": "function_call_output", "output": key}}])
     (event,) = w.tick()
@@ -119,3 +121,107 @@ def test_cli_watch(home, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "npm access token" in out and "1 log files" in out
     assert calls and "npm access token" in calls[0][0]
+
+
+def test_old_keys_in_rewritten_json_are_not_new(home):
+    """Gemini rewrites its whole chat file on every message; a key from last week isn't news."""
+    old = fakes.google()
+    path = home.gemini_chat([{"type": "user", "content": f"old {old}"}])
+    w = Watcher(build_sources(["gemini"]))
+    w.prime()
+    home.gemini_chat([{"type": "user", "content": f"old {old}"}, {"type": "user", "content": "hi"}])
+    os.utime(path, (time.time(), time.time() + 5))
+    assert w.tick() == []
+    new = fakes.npm()
+    home.gemini_chat([{"type": "user", "content": f"old {old}"}, {"type": "user", "content": f"new {new}"}])
+    os.utime(path, (time.time(), time.time() + 10))
+    (event,) = w.tick()
+    assert event.finding.secret == new
+
+
+def test_a_repeat_in_another_file_still_gets_scrubbed(home):
+    now = [1000.0]
+    a = home.claude_session(name="a", records=[])
+    b = home.claude_session(name="b", records=[])
+    w = Watcher(build_sources(["claude"]), scrub_after=10, clock=lambda: now[0])
+    w.prime()
+    key = fakes.npm()
+    append(a, {"type": "user", "message": {"content": key}})
+    assert len(w.tick()) == 1
+    append(b, {"type": "user", "message": {"content": key}})
+    assert w.tick() == []  # reported once
+    assert b in w.pending
+    for p in (a, b):
+        w.files[p].mtime = 1000.0
+    now[0] = 2000.0
+    assert {p for p, _ in w.scrub_quiet()} == {a, b}
+    assert key not in b.read_text()
+
+
+def test_half_written_line_at_startup(home):
+    session = home.claude_session(records=[{"type": "user", "message": {"content": "hi"}}])
+    key = fakes.github()
+    line = json.dumps({"type": "user", "sessionId": "s1", "message": {"content": f"x {key}"}})
+    cut = line.index(key) + 10  # stop in the middle of the key
+    with open(session, "a", encoding="utf-8") as fh:
+        fh.write(line[:cut])
+    w = Watcher(build_sources(["claude"]))
+    w.prime()
+    with open(session, "a", encoding="utf-8") as fh:
+        fh.write(line[cut:] + "\n")
+    os.utime(session, (time.time(), time.time() + 5))
+    (event,) = w.tick()
+    assert event.finding.secret == key and event.location.origin == Origin.PROMPT and event.location.line == 2
+
+
+def test_in_place_rewrite_that_grows_is_noticed(home):
+    key1 = fakes.npm()
+    session = home.claude_session(records=[{"type": "user", "message": {"content": key1}}])
+    w = Watcher(build_sources(["claude"]))
+    w.prime()
+    text = session.read_text().replace(key1, "[REDACTED:npm-token:0123456789ab]")
+    key2 = fakes.github()
+    text += json.dumps({"type": "user", "message": {"content": key2}}) + "\n"
+    session.write_text(text)
+    os.utime(session, (time.time(), time.time() + 5))
+    (event,) = w.tick()
+    assert event.finding.secret == key2 and event.location.line == 2
+
+
+def test_vanished_file_doesnt_crash(home):
+    session = home.claude_session(records=[])
+    w = Watcher(build_sources(["claude"]))
+    w.prime()
+    session.unlink()
+    assert w.tick() == []
+    assert session not in w.files
+
+
+def test_discovery_is_cached(home, monkeypatch):
+    now = [0.0]
+    w = Watcher(build_sources(["claude"]), clock=lambda: now[0], rediscover=30)
+    w.prime(baseline=False)
+    calls = []
+    real = w.sources[0].discover
+    monkeypatch.setattr(w.sources[0], "discover", lambda: calls.append(1) or real())
+    w.tick()
+    now[0] = 10
+    w.tick()
+    assert calls == []
+    now[0] = 40
+    w.tick()
+    assert calls == [1]
+
+
+def test_scrub_keeps_the_inode(home):
+    now = [1000.0]
+    session = home.claude_session(records=[])
+    w = Watcher(build_sources(["claude"]), scrub_after=1, clock=lambda: now[0])
+    w.prime()
+    ino = session.stat().st_ino
+    append(session, {"type": "user", "message": {"content": fakes.npm()}})
+    w.tick()
+    w.files[session].mtime = 1000.0
+    now[0] = 1100.0
+    assert w.scrub_quiet()
+    assert session.stat().st_ino == ino

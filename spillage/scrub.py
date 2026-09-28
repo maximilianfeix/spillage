@@ -124,7 +124,22 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
-def scrub_file(path: Path, ignore: Iterable[str] = (), rules: Optional[Sequence[Rule]] = None) -> int:
+def write_in_place(path: Path, text: str) -> None:
+    """Overwrite the same inode instead of replacing the file.
+
+    For files an agent may still hold open (Codex keeps its rollout file open for the whole
+    session): after a rename its later writes would go to the old, unlinked file."""
+    st = path.stat()
+    data = text.encode("utf-8")
+    with open(path, "r+b") as fh:
+        fh.write(data)
+        fh.truncate(len(data))
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
+def scrub_file(
+    path: Path, ignore: Iterable[str] = (), rules: Optional[Sequence[Rule]] = None, in_place: bool = False
+) -> int:
     """Redact every secret in one file. Used when a session ends, so no scan result needed."""
     rules = list(rules) if rules is not None else get_rules()
     text = read_exact(path)
@@ -142,7 +157,7 @@ def scrub_file(path: Path, ignore: Iterable[str] = (), rules: Optional[Sequence[
         return 0
     new, count = redact_text(text, targets, rules, is_json)
     if count and _still_valid(text, new, kind):
-        write_atomic(path, new)
+        (write_in_place if in_place else write_atomic)(path, new)
         return count
     return 0
 

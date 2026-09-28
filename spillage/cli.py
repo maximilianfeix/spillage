@@ -308,6 +308,10 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
     count = watcher.prime()
     mode = f", scrubbing files {args.quiet:.0f}s after they go quiet" if args.scrub else ""
     print(f"\n  {p('spillage watch', 'bold')} {p(f'· {count} log files, every {args.interval:g}s{mode}', 'dim')}")
+    if watcher.baseline:
+        n = len(watcher.baseline)
+        print(p(f"  {n} secret{'s' if n != 1 else ''} already in the logs won't be reported again "
+                "(`spillage scan` lists them).", "dim"))
     print(p("  Ctrl+C to stop.\n", "dim"), flush=True)
     ticks = 0
     while max_ticks is None or ticks < max_ticks:

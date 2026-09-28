@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3] - 2026-09-28
+
+### Fixed
+- `watch` reported keys that were already in JSON, Markdown and SQLite logs whenever those files changed. It now takes a baseline at startup and only reports what's new since then
+- `watch --scrub` missed a known key showing up in a second file, and replaced files with a rename, which could cut off an agent that still had the file open (Codex keeps its rollout file open). Files are now rewritten in place
+- `watch` no longer reads half a line when it starts in the middle of a write, notices in-place rewrites that make a file longer, survives files vanishing or being locked, and doesn't re-list every log folder every 2 seconds or read every log at startup
+
 ## [0.6.2] - 2026-09-28
 
 ### Fixed
