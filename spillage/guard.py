@@ -30,7 +30,7 @@ from .scanner import scan_text
 
 MARK = "spillage hook"
 ALLOW_WORD = "spillage:allow"
-TOOL_MATCHER = "Read|Grep|Bash|NotebookRead"
+TOOL_MATCHER = "Read|Grep|Bash|NotebookRead|mcp__.*read.*"
 
 # Files that are nothing but secrets. Templates like .env.example are fine to read.
 SECRET_FILES = (
@@ -117,11 +117,28 @@ def _strings(value: Any) -> List[str]:
     return []
 
 
+def _is_mcp_read(tool: str) -> bool:
+    """MCP filesystem tools: mcp__filesystem__read_file (Claude, Codex), mcp_fs_read_text_file (Gemini)."""
+    return tool.startswith("mcp") and bool(re.search(r"_read(_text|_multiple|_media)?_files?$", tool))
+
+
+def shell_script(argv: List[str]) -> str:
+    """The script inside `bash -lc '…'`, `/usr/bin/env bash -l -c '…'` and friends, else argv joined."""
+    words = list(argv)
+    if words and os.path.basename(words[0]) == "env":
+        words = words[1:]
+    if words and os.path.basename(words[0]) in ("bash", "sh", "zsh", "dash", "fish"):
+        for i, word in enumerate(words[1:], 1):
+            if word.startswith("-") and not word.startswith("--") and "c" in word[1:] and i + 1 < len(words):
+                return words[i + 1]
+    return " ".join(words)
+
+
 def check_tool(tool: str, tool_input: Any) -> Optional[str]:
     if not isinstance(tool_input, dict):
         return None
-    if tool in READ_TOOLS or tool.endswith("__read_file"):
-        for key in ("file_path", "notebook_path", "absolute_path", "path", "paths"):
+    if tool in READ_TOOLS or _is_mcp_read(tool):
+        for key in ("file_path", "notebook_path", "absolute_path", "path", "paths", "include"):
             for path in _strings(tool_input.get(key)):
                 if is_secret_file(path):
                     return f"{path} holds secrets"
@@ -133,9 +150,7 @@ def check_tool(tool: str, tool_input: Any) -> Optional[str]:
     if tool in SHELL_TOOLS:
         command = tool_input.get("command") or ""
         if isinstance(command, list):  # Codex can pass argv, often ["bash", "-lc", "<script>"]
-            argv = [str(c) for c in command]
-            shell_c = len(argv) >= 3 and os.path.basename(argv[0]) in ("bash", "sh", "zsh") and argv[1] in ("-c", "-lc")
-            command = argv[-1] if shell_c else " ".join(argv)
+            command = shell_script([str(c) for c in command])
         if isinstance(command, str):
             return risky_command(command)
     return None
@@ -200,26 +215,33 @@ def run_hook(event: str, stdin: Optional[Any] = None, stderr: Optional[Any] = No
 
 @dataclass(frozen=True)
 class AgentHooks:
-    """Where an agent keeps its hook config, and what it calls the three events."""
+    """Which config file an agent reads hooks from, and what it calls the three events.
+    Where the agent lives and what it's called come from its adapter in sources.py."""
 
     name: str
-    label: str
-    home: str  # config folder in $HOME, e.g. ".claude"
-    env: str  # environment variable that moves it, if any
+    folder: str  # the per-project config folder, e.g. ".claude"
     user_file: str
     project_file: str
-    local_file: str
+    local_file: Optional[str]  # None: the agent has no uncommitted, per-project config
     prompt_event: str
     tool_event: str
     end_event: str
     tool_matcher: str
+    comments: bool = False  # the config file may contain // comments (JSONC)
 
     def events(self) -> Tuple[str, str, str]:
         return (self.prompt_event, self.tool_event, self.end_event)
 
+    @property
+    def label(self) -> str:
+        from .sources import get_source
+
+        return get_source(self.name).label
+
     def config_dir(self) -> Path:
-        env = os.environ.get(self.env) if self.env else None
-        return Path(env) if env else Path.home() / self.home
+        from .sources import get_source
+
+        return get_source(self.name)(Path.home()).roots()[0]
 
     def present(self) -> bool:
         return self.config_dir().is_dir()
@@ -227,17 +249,20 @@ class AgentHooks:
 
 AGENTS = {
     "claude": AgentHooks(
-        "claude", "Claude Code", ".claude", "CLAUDE_CONFIG_DIR", "settings.json", "settings.json",
-        "settings.local.json", "UserPromptSubmit", "PreToolUse", "SessionEnd", TOOL_MATCHER,
+        name="claude", folder=".claude", user_file="settings.json", project_file="settings.json",
+        local_file="settings.local.json", prompt_event="UserPromptSubmit", tool_event="PreToolUse",
+        end_event="SessionEnd", tool_matcher=TOOL_MATCHER,
     ),
     "codex": AgentHooks(
-        "codex", "Codex CLI", ".codex", "CODEX_HOME", "hooks.json", "hooks.json", "hooks.json",
-        "UserPromptSubmit", "PreToolUse", "SessionEnd", "Bash|shell|local_shell|read_file",
+        name="codex", folder=".codex", user_file="hooks.json", project_file="hooks.json", local_file=None,
+        prompt_event="UserPromptSubmit", tool_event="PreToolUse", end_event="SessionEnd",
+        tool_matcher="Bash|shell|local_shell|read_file|mcp__.*read.*",
     ),
     "gemini": AgentHooks(
-        "gemini", "Gemini CLI", ".gemini", "", "settings.json", "settings.json", "settings.json",
-        "BeforeAgent", "BeforeTool", "SessionEnd",
-        "read_file|read_many_files|run_shell_command|grep|search_file_content",
+        name="gemini", folder=".gemini", user_file="settings.json", project_file="settings.json", local_file=None,
+        prompt_event="BeforeAgent", tool_event="BeforeTool", end_event="SessionEnd",
+        tool_matcher="read_file|read_many_files|run_shell_command|grep|search_file_content|mcp_.*read.*",
+        comments=True,
     ),
 }
 
@@ -253,10 +278,12 @@ def settings_path(scope: str = "user", cwd: Optional[Path] = None, agent: str = 
     target = get_agent(agent)
     if scope == "user":
         return target.config_dir() / target.user_file
-    folder = (cwd or Path.cwd()) / target.home
+    folder = (cwd or Path.cwd()) / target.folder
     if scope == "project":
         return folder / target.project_file
     if scope == "local":
+        if not target.local_file:
+            raise ValueError(f"{target.label} has no uncommitted per-project config; use --scope user or project")
         return folder / target.local_file
     raise ValueError(f"unknown scope {scope!r} (user, project or local)")
 
@@ -288,6 +315,41 @@ def verify(event: str = "prompt") -> Optional[str]:
     return None
 
 
+def strip_json_comments(text: str) -> str:
+    """// and /* */ comments and trailing commas out of JSONC, leaving strings alone."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+        else:
+            out.append(c)
+            i += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+def has_comments(path: Path) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        json.loads(text)
+        return False
+    except ValueError:
+        return True
+
+
 def _load(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -297,7 +359,10 @@ def _load(path: Path) -> dict:
     try:
         data = json.loads(text)
     except ValueError:
-        raise ValueError(f"{path} is not valid JSON, fix it first so nothing gets lost") from None
+        try:
+            data = json.loads(strip_json_comments(text))
+        except ValueError:
+            raise ValueError(f"{path} is not valid JSON, fix it first so nothing gets lost") from None
     if not isinstance(data, dict):
         raise ValueError(f"{path} doesn't hold a JSON object")
     return data

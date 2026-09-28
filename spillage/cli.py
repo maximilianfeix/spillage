@@ -245,12 +245,11 @@ def cmd_scrub(args: argparse.Namespace) -> int:
 
 
 def _guard_agents(args: argparse.Namespace) -> List[str]:
+    """--agent if given, else the agents installed on this machine (Claude Code if none)."""
     if args.agent:
         for name in args.agent:
             guard.get_agent(name)
         return args.agent
-    if args.action != "install":
-        return list(guard.AGENTS)
     found = [name for name, target in guard.AGENTS.items() if target.present()]
     return found or ["claude"]
 
@@ -258,28 +257,38 @@ def _guard_agents(args: argparse.Namespace) -> List[str]:
 def cmd_guard(args: argparse.Namespace) -> int:
     p = Painter(supports_color(sys.stdout))
     agents = _guard_agents(args)
-    all_on = True
+    ok = True
+    installed = []
     print()
     for name in agents:
         target = guard.get_agent(name)
-        path = guard.settings_path(args.scope, agent=name)
-        where = short_path(str(path))
-        if args.action == "install":
-            changed = guard.install(path, name)
-            state = "installed" if changed else "already installed"
-            print(f"  {p('✓', 'green')} {target.label:<12} guard {state} in {where}")
-        elif args.action == "uninstall":
-            if guard.uninstall(path):
-                print(f"  {p('✓', 'green')} {target.label:<12} guard removed from {where}")
-            elif args.agent:
-                print(f"    {target.label:<12} guard wasn't installed in {where}")
-        else:
-            state = guard.status(path, name)
-            on = all(state.values())
-            all_on = all_on and on
-            mark = p("● on ", "green") if on else (p("◐ part", "yellow") if any(state.values()) else p("○ off", "gray"))
-            print(f"  {mark}  {target.label:<12} {p(where, 'dim')}")
-    if args.action == "install":
+        try:
+            path = guard.settings_path(args.scope, agent=name)
+            where = short_path(str(path))
+            if args.action == "install":
+                had_comments = target.comments and guard.has_comments(path)
+                state = "installed" if guard.install(path, name) else "already installed"
+                installed.append(name)
+                print(f"  {p('✓', 'green')} {target.label:<12} guard {state} in {where}")
+                if had_comments:
+                    print(p(f"    the comments in that file were dropped; the original is in {where}.spillage-backup",
+                            "yellow"))
+            elif args.action == "uninstall":
+                if guard.uninstall(path):
+                    print(f"  {p('✓', 'green')} {target.label:<12} guard removed from {where}")
+                else:
+                    print(f"    {target.label:<12} guard wasn't installed in {where}")
+            else:
+                state = guard.status(path, name)
+                on = all(state.values())
+                ok = ok and on
+                partly = any(state.values())
+                mark = p("● on ", "green") if on else (p("◐ part", "yellow") if partly else p("○ off", "gray"))
+                print(f"  {mark}  {target.label:<12} {p(where, 'dim')}")
+        except ValueError as exc:
+            ok = False
+            print(p(f"  ✗ {target.label:<12} {exc}", "red"))
+    if args.action == "install" and installed:
         problem = guard.verify()
         if problem:
             print(p(f"\n  ✗ the hook command doesn't run: {problem}", "red"))
@@ -291,12 +300,15 @@ def cmd_guard(args: argparse.Namespace) -> int:
         print(p("    reading .env files, keys and credential files is blocked, also via the shell", "dim"))
         print(p("    when a session ends, its transcript is scrubbed", "dim"))
         print(p("    takes effect in new sessions. Undo: spillage guard uninstall", "dim"))
-        if "codex" in agents:
+        if "codex" in installed:
             print(p("    Codex asks you to trust new hooks once: run /hooks inside Codex", "yellow"))
+        if "gemini" in installed:
+            print(p("    Gemini CLI: written to its documented hook format, not yet tried against a real install",
+                    "yellow"))
     print()
     if args.action == "status":
-        return EXIT_CLEAN if all_on else EXIT_FOUND
-    return EXIT_CLEAN
+        return EXIT_CLEAN if ok else EXIT_FOUND
+    return EXIT_CLEAN if ok else EXIT_USAGE
 
 
 def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:

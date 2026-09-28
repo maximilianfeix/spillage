@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.5] - 2026-09-28
+
+### Fixed
+- `guard status` only checks the agents installed on the machine, so it no longer fails because Codex or Gemini aren't there
+- Gemini `settings.json` with comments no longer blocks `guard install` (a backup keeps the original)
+- one agent with a broken config no longer stops `guard install` for the others
+- more ways to read secrets are blocked: Gemini's `read_many_files` with `include`, MCP filesystem read tools (now also sent to the hook by Claude Code's matcher), and shell argv like `bash -l -c …`, `/usr/bin/env bash -c …`
+- `--scope local` for Codex and Gemini used to write into the shared project config; it's refused now, since only Claude Code has a local-only file
+
 ## [0.6.4] - 2026-09-28
 
 ### Fixed
