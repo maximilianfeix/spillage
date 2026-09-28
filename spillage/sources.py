@@ -332,6 +332,8 @@ class ClaudeCode(Source):
         kind = record.get("type")
         if kind == "file-history-snapshot":
             return Origin.FILE
+        if kind in ("queue-operation", "last-prompt"):
+            return Origin.PROMPT  # prompts are logged here even when a hook blocked them
         if "display" in record or "pastedContents" in record:
             return Origin.HISTORY
         if kind in ("attachment", "system") or "toolUseResult" in path[:1]:
