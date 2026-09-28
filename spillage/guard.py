@@ -1,4 +1,4 @@
-"""Claude Code hooks that stop the next leak before it happens.
+"""Agent hooks that stop the next leak before it happens (Claude Code, Codex, Gemini CLI).
 
 Three hooks, all plain commands that read the hook event as JSON on stdin:
 
@@ -21,6 +21,7 @@ import re
 import shlex
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -29,7 +30,6 @@ from .scanner import scan_text
 MARK = "spillage hook"
 ALLOW_WORD = "spillage:allow"
 TOOL_MATCHER = "Read|Grep|Bash|NotebookRead"
-HOOK_EVENTS = ("UserPromptSubmit", "PreToolUse", "SessionEnd")
 
 # Files that are nothing but secrets. Templates like .env.example are fine to read.
 SECRET_FILES = (
@@ -102,21 +102,39 @@ def risky_command(command: str) -> Optional[str]:
     return None
 
 
+# Tool names differ per agent; they all boil down to reading, searching or running a shell.
+READ_TOOLS = {"Read", "NotebookRead", "read_file", "read_many_files"}
+SEARCH_TOOLS = {"Grep", "grep", "search_file_content"}
+SHELL_TOOLS = {"Bash", "run_shell_command", "shell", "local_shell"}
+
+
+def _strings(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, str)]
+    return []
+
+
 def check_tool(tool: str, tool_input: Any) -> Optional[str]:
     if not isinstance(tool_input, dict):
         return None
-    if tool in ("Read", "NotebookRead"):
-        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-        if isinstance(path, str) and is_secret_file(path):
-            return f"{path} holds secrets"
-    if tool == "Grep":
-        path = tool_input.get("path") or ""
-        glob = tool_input.get("glob") or ""
-        for candidate in (path, glob):
-            if isinstance(candidate, str) and candidate and is_secret_file(candidate):
-                return f"searching {candidate} would print secrets"
-    if tool == "Bash":
+    if tool in READ_TOOLS or tool.endswith("__read_file"):
+        for key in ("file_path", "notebook_path", "absolute_path", "path", "paths"):
+            for path in _strings(tool_input.get(key)):
+                if is_secret_file(path):
+                    return f"{path} holds secrets"
+    if tool in SEARCH_TOOLS:
+        for key in ("path", "glob", "include"):
+            for candidate in _strings(tool_input.get(key)):
+                if candidate and is_secret_file(candidate):
+                    return f"searching {candidate} would print secrets"
+    if tool in SHELL_TOOLS:
         command = tool_input.get("command") or ""
+        if isinstance(command, list):  # Codex can pass argv, often ["bash", "-lc", "<script>"]
+            argv = [str(c) for c in command]
+            shell_c = len(argv) >= 3 and os.path.basename(argv[0]) in ("bash", "sh", "zsh") and argv[1] in ("-c", "-lc")
+            command = argv[-1] if shell_c else " ".join(argv)
         if isinstance(command, str):
             return risky_command(command)
     return None
@@ -149,7 +167,7 @@ def handle(event: str, payload: dict) -> Tuple[int, str]:
         return 0, ""
     if event == "session-end":
         transcript = payload.get("transcript_path")
-        if isinstance(transcript, str) and transcript.endswith(".jsonl") and Path(transcript).is_file():
+        if isinstance(transcript, str) and transcript.endswith((".jsonl", ".json")) and Path(transcript).is_file():
             from .scanner import load_ignore
             from .scrub import scrub_file
 
@@ -173,17 +191,68 @@ def run_hook(event: str, stdin: Optional[Any] = None, stderr: Optional[Any] = No
     return code
 
 
-# ---- installing into settings.json ----------------------------------------------------------
+# ---- installing ------------------------------------------------------------------------------
 
-def settings_path(scope: str = "user", cwd: Optional[Path] = None) -> Path:
+@dataclass(frozen=True)
+class AgentHooks:
+    """Where an agent keeps its hook config, and what it calls the three events."""
+
+    name: str
+    label: str
+    home: str  # config folder in $HOME, e.g. ".claude"
+    env: str  # environment variable that moves it, if any
+    user_file: str
+    project_file: str
+    local_file: str
+    prompt_event: str
+    tool_event: str
+    end_event: str
+    tool_matcher: str
+
+    def events(self) -> Tuple[str, str, str]:
+        return (self.prompt_event, self.tool_event, self.end_event)
+
+    def config_dir(self) -> Path:
+        env = os.environ.get(self.env) if self.env else None
+        return Path(env) if env else Path.home() / self.home
+
+    def present(self) -> bool:
+        return self.config_dir().is_dir()
+
+
+AGENTS = {
+    "claude": AgentHooks(
+        "claude", "Claude Code", ".claude", "CLAUDE_CONFIG_DIR", "settings.json", "settings.json",
+        "settings.local.json", "UserPromptSubmit", "PreToolUse", "SessionEnd", TOOL_MATCHER,
+    ),
+    "codex": AgentHooks(
+        "codex", "Codex CLI", ".codex", "CODEX_HOME", "hooks.json", "hooks.json", "hooks.json",
+        "UserPromptSubmit", "PreToolUse", "SessionEnd", "Bash|shell|local_shell|read_file",
+    ),
+    "gemini": AgentHooks(
+        "gemini", "Gemini CLI", ".gemini", "", "settings.json", "settings.json", "settings.json",
+        "BeforeAgent", "BeforeTool", "SessionEnd",
+        "read_file|read_many_files|run_shell_command|grep|search_file_content",
+    ),
+}
+
+
+def get_agent(name: str) -> AgentHooks:
+    try:
+        return AGENTS[name]
+    except KeyError:
+        raise ValueError(f"guard supports {', '.join(AGENTS)}, not {name!r}") from None
+
+
+def settings_path(scope: str = "user", cwd: Optional[Path] = None, agent: str = "claude") -> Path:
+    target = get_agent(agent)
     if scope == "user":
-        base = Path(os.environ["CLAUDE_CONFIG_DIR"]) if os.environ.get("CLAUDE_CONFIG_DIR") else Path.home() / ".claude"
-        return base / "settings.json"
-    folder = (cwd or Path.cwd()) / ".claude"
+        return target.config_dir() / target.user_file
+    folder = (cwd or Path.cwd()) / target.home
     if scope == "project":
-        return folder / "settings.json"
+        return folder / target.project_file
     if scope == "local":
-        return folder / "settings.local.json"
+        return folder / target.local_file
     raise ValueError(f"unknown scope {scope!r} (user, project or local)")
 
 
@@ -227,22 +296,23 @@ def _is_ours(group: Any) -> bool:
     )
 
 
-def _desired() -> dict:
+def _desired(agent: str = "claude") -> dict:
+    t = get_agent(agent)
     return {
-        "UserPromptSubmit": {"hooks": [{"type": "command", "command": hook_command("prompt")}]},
-        "PreToolUse": {"matcher": TOOL_MATCHER, "hooks": [{"type": "command", "command": hook_command("tool")}]},
-        "SessionEnd": {"hooks": [{"type": "command", "command": hook_command("session-end")}]},
+        t.prompt_event: {"hooks": [{"type": "command", "command": hook_command("prompt")}]},
+        t.tool_event: {"matcher": t.tool_matcher, "hooks": [{"type": "command", "command": hook_command("tool")}]},
+        t.end_event: {"hooks": [{"type": "command", "command": hook_command("session-end")}]},
     }
 
 
-def install(path: Path) -> bool:
+def install(path: Path, agent: str = "claude") -> bool:
     """Add our hooks, keep everyone else's. Returns False if they were already there as-is."""
     data = _load(path)
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError(f"'hooks' in {path} isn't an object")
     changed = False
-    for event, group in _desired().items():
+    for event, group in _desired(agent).items():
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"'hooks.{event}' in {path} isn't a list")
@@ -284,13 +354,14 @@ def uninstall(path: Path) -> bool:
     return changed
 
 
-def status(path: Path) -> dict:
+def status(path: Path, agent: str = "claude") -> dict:
+    events = get_agent(agent).events()
     try:
         data = _load(path)
     except ValueError:
-        return dict.fromkeys(HOOK_EVENTS, False)
+        return dict.fromkeys(events, False)
     hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
     return {
         event: any(_is_ours(g) for g in hooks.get(event, []) if isinstance(hooks.get(event), list))
-        for event in HOOK_EVENTS
+        for event in events
     }

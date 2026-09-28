@@ -15,7 +15,7 @@
 
 <a href="#install"><img src="https://img.shields.io/badge/Install-FF6B4A?style=for-the-badge&labelColor=0E0F13" alt="Install"></a>
 <a href="#scrub"><img src="https://img.shields.io/badge/Scrub-0E0F13?style=for-the-badge" alt="Scrub"></a>
-<a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code"></a>
+<a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
 <a href="#what-it-finds"><img src="https://img.shields.io/badge/40_rules-0E0F13?style=for-the-badge" alt="40 rules"></a>
 
 [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [How it works](#how-it-works) · [FAQ](#faq)
@@ -36,7 +36,7 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 - **Knows the formats.** Tells a pasted prompt from tool output from a model answer, per agent. Finds keys inside JSON-escaped text, like a private key a tool printed with `\n` in it.
 - **Few false alarms.** GitHub tokens are checked against their built-in CRC32, JWTs have to decode, Discord tokens have to hold a real user id, placeholders like `sk-...your-key-here` are skipped.
 - **Fast.** Rules run over the raw files with literal-prefix regexes on all cores. About 230 MB of real Claude Code history in 9 seconds on a laptop.
-- **Fixes it, too.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`. `guard` blocks the next leak in Claude Code.
+- **Fixes it, too.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`. `guard` blocks the next leak in Claude Code, Codex and Gemini CLI.
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -124,7 +124,7 @@ spillage scan --agent claude      only some agents, comma separated
 spillage scan --min-severity high skip the low and medium stuff
 spillage scan -v                  every place a secret was seen, not just the first
 spillage scrub                    remove what it found from the logs (asks first)
-spillage guard install            Claude Code hooks that block the next leak
+spillage guard install            agent hooks that block the next leak
 spillage check "some text"        scan a string, or stdin: pbpaste | spillage check
 spillage ignore <fingerprint>     stop reporting a secret (a test key, say)
 spillage agents                   which agents were found, and where
@@ -174,22 +174,25 @@ It is careful with the files, because your agent reads them back when you resume
 ## Guard
 
 ```bash
-spillage guard install    # ~/.claude/settings.json; --scope project or local for one repo
+spillage guard install    # every agent it finds; --agent claude,codex,gemini to pick
 spillage guard status
 spillage guard uninstall
 ```
 
-Adds three [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks):
+Adds three hooks to **Claude Code**, **Codex CLI** and **Gemini CLI**:
 
-| Hook | What it does |
-| --- | --- |
-| `UserPromptSubmit` | Blocks a prompt that contains a key, before it's sent. Put `spillage:allow` in the prompt if you really mean it. |
-| `PreToolUse` | Blocks reading `.env` files, private keys and credential files (`.npmrc`, `.aws/credentials`, `*.pem`, …) through Read and Grep, and Bash commands that would print secrets: `cat .env`, `printenv`, `gh auth token`, `security find-generic-password -w`, … The reason goes back to the model, so it asks you instead. `.env.example` and friends stay readable. |
-| `SessionEnd` | Scrubs the transcript of the session that just ended. |
+| Hook | Claude Code / Codex | Gemini CLI | What it does |
+| --- | --- | --- | --- |
+| prompt | `UserPromptSubmit` | `BeforeAgent` | Blocks a prompt that contains a key, before it's sent. Put `spillage:allow` in the prompt if you really mean it. |
+| tool | `PreToolUse` | `BeforeTool` | Blocks reading `.env` files, private keys and credential files (`.npmrc`, `.aws/credentials`, `*.pem`, …) and shell commands that would print secrets: `cat .env`, `printenv`, `gh auth token`, `security find-generic-password -w`, … The reason goes back to the model, so it asks you instead. `.env.example` and friends stay readable. |
+| session end | `SessionEnd` | `SessionEnd` | Scrubs the transcript of the session that just ended. |
 
-That last one exists because of something that came up while testing the first against the real Claude Code: **a blocked prompt still gets written into the session file.** It's never sent, but it ends up on disk as a `queue-operation` record. The `SessionEnd` hook cleans that up, along with anything a tool printed that the other hook didn't catch.
+That last one exists because of something that came up while testing the first against the real Claude Code: **a blocked prompt still gets written into the session file.** It's never sent, but it ends up on disk as a `queue-operation` record. The session-end hook cleans that up, along with anything a tool printed that the other hook didn't catch.
 
-Your other hooks and settings are left alone, a backup of `settings.json` is kept the first time, and a `settings.json` that isn't valid JSON is refused rather than overwritten. Each hook call takes about a tenth of a second.
+The config goes where each agent expects it: `~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/settings.json` (or the repo's folder with `--scope project`). Your other hooks and settings are left alone, a backup is kept the first time, and a file that isn't valid JSON is refused rather than overwritten. Each hook call takes about a tenth of a second.
+
+> [!NOTE]
+> Codex runs new hooks only after you've trusted them once: open Codex and run `/hooks`. Claude Code and Codex were tested end to end with their real CLIs; Gemini CLI follows its documented hook format.
 
 <a id="how-it-works"></a>
 

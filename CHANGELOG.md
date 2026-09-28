@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `spillage guard` now also covers Codex CLI (`~/.codex/hooks.json`) and Gemini CLI (`~/.gemini/settings.json`). `install` sets up every agent it finds, `--agent` picks. Tool names from all three agents are understood (`read_file`, `run_shell_command`, argv-style `["bash", "-lc", ...]`, ...)
+
 ## [0.1.0] - 2026-09-28
 
 ### Added

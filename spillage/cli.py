@@ -81,11 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
     scrub.add_argument("--include-active", action="store_true",
                        help="also touch files written in the last minute (probably a running session)")
 
-    guard = sub.add_parser("guard", help="install Claude Code hooks that block leaks before they happen")
+    guard = sub.add_parser("guard", help="install agent hooks that block leaks before they happen")
     guard.add_argument("action", choices=["install", "uninstall", "status"])
+    guard.add_argument("-a", "--agent", type=_csv, default=[], metavar="NAMES",
+                       help="claude, codex, gemini (default: every one installed on this machine)")
     guard.add_argument("--scope", choices=["user", "project", "local"], default="user",
-                       help="user: ~/.claude/settings.json (default), project: .claude/settings.json, "
-                            "local: .claude/settings.local.json")
+                       help="user: in your home folder (default), project: this repo's .claude/.codex/.gemini "
+                            "folder, local: .claude/settings.local.json")
 
     hook = sub.add_parser("hook")  # called by the agent, not by you
     hook.add_argument("event", choices=["prompt", "tool", "session-end"])
@@ -195,29 +197,52 @@ def cmd_scrub(args: argparse.Namespace) -> int:
     return EXIT_USAGE if report.failed else EXIT_CLEAN
 
 
+def _guard_agents(args: argparse.Namespace) -> List[str]:
+    if args.agent:
+        for name in args.agent:
+            guard.get_agent(name)
+        return args.agent
+    if args.action != "install":
+        return list(guard.AGENTS)
+    found = [name for name, target in guard.AGENTS.items() if target.present()]
+    return found or ["claude"]
+
+
 def cmd_guard(args: argparse.Namespace) -> int:
     p = Painter(supports_color(sys.stdout))
-    path = guard.settings_path(args.scope)
-    where = short_path(str(path))
-    if args.action == "install":
-        changed = guard.install(path)
-        if changed:
-            print(f"  {p('✓', 'green')} guard installed in {where}")
+    agents = _guard_agents(args)
+    all_on = True
+    print()
+    for name in agents:
+        target = guard.get_agent(name)
+        path = guard.settings_path(args.scope, agent=name)
+        where = short_path(str(path))
+        if args.action == "install":
+            changed = guard.install(path, name)
+            state = "installed" if changed else "already installed"
+            print(f"  {p('✓', 'green')} {target.label:<12} guard {state} in {where}")
+        elif args.action == "uninstall":
+            if guard.uninstall(path):
+                print(f"  {p('✓', 'green')} {target.label:<12} guard removed from {where}")
+            elif args.agent:
+                print(f"    {target.label:<12} guard wasn't installed in {where}")
         else:
-            print(f"  {p('✓', 'green')} guard was already installed in {where}")
+            state = guard.status(path, name)
+            on = all(state.values())
+            all_on = all_on and on
+            mark = p("● on ", "green") if on else (p("◐ part", "yellow") if any(state.values()) else p("○ off", "gray"))
+            print(f"  {mark}  {target.label:<12} {p(where, 'dim')}")
+    if args.action == "install":
+        print()
         print(p("    prompts with a secret in them are blocked before they're sent", "dim"))
-        print(p("    reading .env files, keys and credential files is blocked, also via Bash", "dim"))
+        print(p("    reading .env files, keys and credential files is blocked, also via the shell", "dim"))
         print(p("    when a session ends, its transcript is scrubbed", "dim"))
-        print(p("    takes effect in new Claude Code sessions. Undo: spillage guard uninstall", "dim"))
-    elif args.action == "uninstall":
-        changed = guard.uninstall(path)
-        print(f"  {p('✓', 'green')} guard removed from {where}" if changed else f"  guard wasn't installed in {where}")
-    else:
-        state = guard.status(path)
-        for event, on in state.items():
-            mark = p("● on ", "green") if on else p("○ off", "gray")
-            print(f"  {mark}  {event:<17} {where}")
-        return EXIT_CLEAN if all(state.values()) else EXIT_FOUND
+        print(p("    takes effect in new sessions. Undo: spillage guard uninstall", "dim"))
+        if "codex" in agents:
+            print(p("    Codex asks you to trust new hooks once: run /hooks inside Codex", "yellow"))
+    print()
+    if args.action == "status":
+        return EXIT_CLEAN if all_on else EXIT_FOUND
     return EXIT_CLEAN
 
 
