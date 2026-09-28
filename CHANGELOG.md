@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `spillage watch`: follows every agent's logs, reports new secrets within seconds with a desktop notification, `--scrub` cleans a file once it has been quiet for a while
 - 16 rules for keys that turn up in agent sessions a lot: Claude Code OAuth tokens (`sk-ant-oat01-`), Supabase secret keys, LangSmith, Pinecone, Tavily, Firecrawl, Resend, PostHog, Vercel Blob, Google OAuth refresh and access tokens, Doppler, HashiCorp Vault, 1Password service accounts, PlanetScale, Brevo
 
 ## [0.3.0] - 2026-09-28

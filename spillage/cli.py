@@ -13,7 +13,7 @@ from typing import List, Optional, Sequence
 
 from . import __version__, guard
 from . import html as _html  # noqa: F401  (registers the html format)
-from .models import Severity
+from .models import Origin, Severity
 from .reporters import agent_label, formats, render
 from .rules import get_rules
 from .scanner import Scanner, ScanResult, add_ignore, default_ignore_file, load_ignore, scan_text
@@ -94,6 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
     hook = sub.add_parser("hook")  # called by the agent, not by you
     hook.add_argument("event", choices=["prompt", "tool", "session-end"])
 
+    watch = sub.add_parser("watch", help="keep watching the logs and report new secrets as they land")
+    watch.add_argument("-a", "--agent", type=_csv, default=[], metavar="NAMES", help="only these agents")
+    watch.add_argument("--scrub", action="store_true",
+                       help="scrub a file once it has been quiet for --quiet seconds after a new secret")
+    watch.add_argument("--quiet", type=float, default=90, metavar="SECONDS",
+                       help="how long a file must be untouched before --scrub touches it (default: 90)")
+    watch.add_argument("--interval", type=float, default=2.0, metavar="SECONDS", help="poll interval (default: 2)")
+    watch.add_argument("--no-notify", action="store_true", help="no desktop notifications, terminal only")
+
     repo = sub.add_parser("repo", help="find agent transcripts committed to a git repo, and secrets in them")
     repo.add_argument("path", nargs="?", default=".", type=Path, help="the repository (default: here)")
     repo.add_argument("--files", nargs="*", metavar="FILE", help="only these files (what pre-commit passes)")
@@ -115,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    commands = {"scan", "scrub", "check", "guard", "hook", "repo", "agents", "rules", "ignore"}
+    commands = {"scan", "scrub", "check", "guard", "hook", "repo", "watch", "agents", "rules", "ignore"}
     if not argv or (argv[0] not in commands and argv[0] not in ("-h", "--help", "-V", "--version")):
         argv = ["scan"] + argv
     args = parser.parse_args(argv)
@@ -125,6 +134,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "scrub": cmd_scrub,
             "guard": cmd_guard,
             "repo": cmd_repo,
+            "watch": cmd_watch,
             "hook": lambda a: guard.run_hook(a.event),
             "check": cmd_check,
             "agents": cmd_agents,
@@ -255,6 +265,36 @@ def cmd_guard(args: argparse.Namespace) -> int:
     print()
     if args.action == "status":
         return EXIT_CLEAN if all_on else EXIT_FOUND
+    return EXIT_CLEAN
+
+
+def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
+    from .watch import Watcher, notify
+
+    p = Painter(supports_color(sys.stdout))
+    watcher = Watcher(build_sources(args.agent), ignore=load_ignore(),
+                      scrub_after=args.quiet if args.scrub else None)
+    count = watcher.prime()
+    mode = f", scrubbing files {args.quiet:.0f}s after they go quiet" if args.scrub else ""
+    print(f"\n  {p('spillage watch', 'bold')} {p(f'· {count} log files, every {args.interval:g}s{mode}', 'dim')}")
+    print(p("  Ctrl+C to stop.\n", "dim"), flush=True)
+    ticks = 0
+    while max_ticks is None or ticks < max_ticks:
+        ticks += 1
+        for event in watcher.tick():
+            f, loc = event.finding, event.location
+            where = short_path(loc.project) if loc.project else short_path(loc.file)
+            how = Origin.DESCRIPTIONS.get(loc.origin, loc.origin)
+            print(f"  {p(time.strftime('%H:%M:%S'), 'dim')}  {p.badge(f.severity)} {p(f.rule_name, 'bold')}  "
+                  f"{p(f.masked, 'cyan')}  {agent_label(loc.agent)} {p('·', 'dim')} {where}")
+            print(p(f"            {how}" + (f" · rotate: {f.rotate_url}" if f.rotate_url else ""), "dim"), flush=True)
+            if not args.no_notify:
+                notify(f"spillage: {f.rule_name} leaked",
+                       f"{f.masked} in {agent_label(loc.agent)}. Rotate it.")
+        for path, n in watcher.scrub_quiet():
+            print(f"  {p(time.strftime('%H:%M:%S'), 'dim')}  {p('✓ scrubbed', 'green')} {n} in {short_path(str(path))}", flush=True)
+        if max_ticks is None or ticks < max_ticks:
+            time.sleep(args.interval)
     return EXIT_CLEAN
 
 
