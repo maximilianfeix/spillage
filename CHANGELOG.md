@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Homebrew: `brew install maximilianfeix/tap/spillage`
+- a website: https://maximilianfeix.github.io/spillage/
+
 ## [0.4.0] - 2026-09-28
 
 ### Added
