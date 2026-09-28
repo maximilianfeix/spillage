@@ -14,6 +14,7 @@ from .models import Severity
 from .reporters import agent_label, formats, render
 from .rules import get_rules
 from .scanner import Scanner, ScanResult, add_ignore, default_ignore_file, load_ignore, scan_text
+from .scrub import plan, scrub
 from .sources import all_sources, build_sources
 from .term import Painter, Progress, short_path, supports_color
 
@@ -71,6 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("text", nargs="?", default="-", help="the text, or - for stdin")
     check.add_argument("-q", "--quiet", action="store_true", help="no output, just the exit code")
 
+    scrub = sub.add_parser("scrub", help="remove found secrets from the logs on disk")
+    _add_scan_options(scrub)
+    scrub.add_argument("--only", type=_csv, metavar="FPS", help="only these fingerprints, comma separated")
+    scrub.add_argument("-n", "--dry-run", action="store_true", help="show what would change, change nothing")
+    scrub.add_argument("-y", "--yes", action="store_true", help="don't ask")
+    scrub.add_argument("--include-active", action="store_true",
+                       help="also touch files written in the last minute (probably a running session)")
+
     sub.add_parser("agents", help="show which agents' logs were found and where")
     sub.add_parser("rules", help="list the detection rules")
 
@@ -83,13 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    commands = {"scan", "check", "agents", "rules", "ignore"}
+    commands = {"scan", "scrub", "check", "agents", "rules", "ignore"}
     if not argv or (argv[0] not in commands and argv[0] not in ("-h", "--help", "-V", "--version")):
         argv = ["scan"] + argv
     args = parser.parse_args(argv)
     try:
         return {
             "scan": cmd_scan,
+            "scrub": cmd_scrub,
             "check": cmd_check,
             "agents": cmd_agents,
             "rules": cmd_rules,
@@ -134,6 +144,43 @@ def cmd_scan(args: argparse.Namespace) -> int:
     else:
         print(report)
     return EXIT_FOUND if result.findings and not args.exit_zero else EXIT_CLEAN
+
+
+def cmd_scrub(args: argparse.Namespace) -> int:
+    p = Painter(supports_color(sys.stdout))
+    result = run_scan(args, Progress())
+    findings = [f for f in result.findings if not args.only or f.fingerprint in args.only]
+    if not findings:
+        print(p("✓ nothing to scrub", "green"))
+        return EXIT_CLEAN
+    files = plan(findings)
+    occurrences = sum(len(f.locations) for f in findings)
+    print(f"\n  {len(findings)} secret{'s' if len(findings) != 1 else ''}, {occurrences} places, "
+          f"{len(files)} file{'s' if len(files) != 1 else ''}:")
+    for f in findings:
+        print(f"    {p.badge(f.severity)} {f.rule_name:<28} {p(f.masked, 'cyan')}  {p(f.fingerprint, 'gray')}")
+    print()
+    if not args.dry_run and not args.yes:
+        if not sys.stdin.isatty():
+            print("spillage: not a terminal, pass --yes to scrub without asking", file=sys.stderr)
+            return EXIT_USAGE
+        answer = input(f"  Replace them with [REDACTED:…] markers in {len(files)} files? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            print("  Nothing changed.")
+            return EXIT_CLEAN
+    report = scrub(findings, rules=get_rules(only=args.rules, exclude=args.skip_rules),
+                   dry_run=args.dry_run, include_active=args.include_active)
+    verb = "Would redact" if args.dry_run else "Redacted"
+    print(f"  {p('✓', 'green')} {verb} {report.replacements} occurrences in {len(report.files_changed)} files.")
+    for file in report.skipped_active:
+        print(p(f"  skipped {short_path(file)}: written in the last minute, probably this session. "
+                "Run again later or pass --include-active.", "yellow"))
+    for file, why in report.failed:
+        print(p(f"  could not scrub {short_path(file)}: {why}", "red"))
+    if not args.dry_run and report.replacements:
+        print(p("  Removing them locally doesn't un-send them. Rotate them if you haven't yet.", "dim"))
+    print()
+    return EXIT_USAGE if report.failed else EXIT_CLEAN
 
 
 def cmd_check(args: argparse.Namespace) -> int:

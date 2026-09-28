@@ -17,6 +17,7 @@ No dependencies, no network, nothing leaves your machine. Secrets are only ever 
 spillage                  scan every agent it knows (same as `spillage scan`)
 spillage scan --since 7d  only recent logs
 spillage scan -f json     machine readable, also markdown
+spillage scrub            remove what it found from the logs (asks first)
 spillage check "text"     scan a string or stdin
 spillage agents           which agents were found and where their logs are
 spillage rules            what it looks for
