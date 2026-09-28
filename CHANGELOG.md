@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.7] - 2026-09-28
+
+### Fixed
+- the Sentry rule never matched (a typo in its pattern)
+- about 1 in 370 real private keys was dropped because its random body happened to contain a word like "todo"
+- AWS secret keys under names like `AWSSecretAccessKey` were only caught by the generic rule
+- Goose, Crush and Cursor databases in WAL mode: the newest messages, still in the `-wal` file, were invisible
+- a single JSONL file over 256 MB was skipped without a word; it's read in parts now, other oversized files are listed as skipped
+- when several rules see the same secret, the most specific one names it (an AWS key that's also in `.env` is an "AWS secret access key", critical)
+- custom rules passed to `Scanner` crashed a parallel scan
+- scanning a file in parts decoded invalid bytes differently from reading it whole, which changed fingerprints
+- line numbers are counted incrementally and each JSON line is parsed once, instead of once per hit
+
 ## [0.6.6] - 2026-09-28
 
 ### Fixed

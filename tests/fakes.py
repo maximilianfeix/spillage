@@ -178,3 +178,7 @@ def planetscale() -> str:
 
 def brevo() -> str:
     return "xkey" + "sib-" + rand(64, HEX) + "-" + rand(16)
+
+
+def sentry_user() -> str:
+    return "sntry" + "u_" + rand(64, HEX)

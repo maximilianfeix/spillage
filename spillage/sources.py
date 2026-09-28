@@ -124,6 +124,20 @@ class Source:
         return state.get("session") or path.stem
 
 
+def open_sqlite(path: Path):
+    """Read-only. Plain mode=ro first, so rows still in the -wal file are seen too (that's
+    where the newest messages sit); immutable=1 only if that fails, e.g. without write access
+    to the -shm file."""
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        return conn
+    except sqlite3.Error:
+        return sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+
+
 def read_text_exact(path: Path) -> Optional[str]:
     """A file's text exactly as on disk: line endings untouched, and a stray invalid byte kept
     as a surrogate so encoding it back gives the same bytes. None for binary files.
@@ -163,8 +177,10 @@ class Document:
         self._parsed: Any = _UNSET
         self._first_state: Optional[dict] = None
         # set when this document is only one part of a big file
-        self.line_offset = 0
+        self.line_offset: Any = 0  # an int, or a function that counts it when first needed
         self.first_line: Optional[str] = None
+        self._line_cache = (0, 0)
+        self._record_cache: Tuple[int, Any] = (-1, None)
 
     @property
     def is_json(self) -> bool:
@@ -174,7 +190,15 @@ class Document:
         return decode_json_fragment(raw) if self.is_json else raw
 
     def line_of(self, offset: int) -> int:
-        return self.line_offset + self.text.count("\n", 0, offset) + 1
+        """Line numbers are counted forward from the previous hit (hits come in text order)."""
+        if callable(self.line_offset):  # a part of a big file: count lines before it only if needed
+            self.line_offset = self.line_offset()
+        last_off, last_count = self._line_cache
+        if offset < last_off:
+            last_off, last_count = 0, 0
+        count = last_count + self.text.count("\n", last_off, offset)
+        self._line_cache = (offset, count)
+        return self.line_offset + count + 1
 
     def locate(self, start: int, secret: str) -> Optional[Location]:
         """Where a secret sits. None if it only occurs inside a blob we deliberately skip
@@ -192,9 +216,15 @@ class Document:
         end = self.text.find("\n", start)
         line = self.text[begin : end if end != -1 else len(self.text)]
         state = dict(self._initial_state())
-        try:
-            record = json.loads(line)
-        except ValueError:
+        if self._record_cache[0] == begin:
+            record = self._record_cache[1]
+        else:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                record = _UNSET
+            self._record_cache = (begin, record)
+        if record is _UNSET:
             return self._location(lineno, (), Origin.OTHER, state, "")
         self.source.update_state(record, state)
         return self._in_record(record, (), lineno, secret, state)
@@ -542,7 +572,7 @@ class Cursor(Source):
 
         try:
             # immutable: never take a lock on a database Cursor may have open
-            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+            conn = open_sqlite(path)
         except sqlite3.Error:
             return None
         lines = []
@@ -714,7 +744,7 @@ class SQLiteSource(Source):
         import sqlite3
 
         try:
-            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+            conn = open_sqlite(path)
         except sqlite3.Error:
             return None
         lines = []
