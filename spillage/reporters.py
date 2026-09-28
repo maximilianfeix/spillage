@@ -10,7 +10,7 @@ from typing import Callable, Dict
 from .models import Finding, Origin, Severity
 from .scanner import ScanResult
 from .sources import get_source
-from .term import SEVERITY_FG, Painter, human_bytes, short_path, width
+from .term import SEVERITY_FG, Painter, ellipsize, human_bytes, short_path, width
 
 Reporter = Callable[..., str]
 _REPORTERS: Dict[str, Reporter] = {}
@@ -99,6 +99,7 @@ def render_text(result: ScanResult, color: bool = False, verbose: bool = False, 
     for f in result.findings:
         out.extend(_finding_block(f, p, verbose))
 
+    out.append("")
     out.append(p("  Next steps", "bold"))
     out.append(f"    1. {p('Rotate these keys.', 'bold')} They were sent to the model provider when the "
                f"conversation happened;")
@@ -133,7 +134,7 @@ def _finding_block(f: Finding, p: Painter, verbose: bool) -> list:
     shown = f.locations if verbose else f.locations[:1]
     for i, loc in enumerate(shown):
         label = "where:" if i == 0 else "      "
-        where = short_path(loc.file) + (f":{loc.line}" if loc.line else "")
+        where = ellipsize(short_path(loc.file) + (f":{loc.line}" if loc.line else ""), width() - 22)
         lines.append(f"{' ' * 13}{p(label, 'dim')}  {where}")
     if not verbose and len(f.locations) > 1:
         lines.append(f"{' ' * 13}{p(f'        +{len(f.locations) - 1} more (--verbose)', 'dim')}")

@@ -79,6 +79,15 @@ def short_path(path: str) -> str:
     return "~" + path[len(home) :] if path.startswith(home) else path
 
 
+def ellipsize(text: str, limit: int) -> str:
+    """Shorten from the middle, where paths are least interesting: ~/.claude/…/abc.jsonl:12"""
+    if len(text) <= limit or limit < 12:
+        return text
+    keep = limit - 1
+    head = keep * 2 // 5
+    return text[:head] + "…" + text[len(text) - (keep - head):]
+
+
 def human_bytes(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
