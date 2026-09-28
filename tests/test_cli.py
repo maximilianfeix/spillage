@@ -136,3 +136,12 @@ def test_parse_since_date_and_garbage():
 
     with pytest.raises(argparse.ArgumentTypeError):
         parse_since("last tuesday")
+
+
+def test_ellipsize():
+    from spillage.term import ellipsize
+
+    path = "~/.claude/projects/-Users-you-code-shop/8f2c41d0-6a1e-4c55-9d0e-5b7e2a91c3f4.jsonl:12"
+    short = ellipsize(path, 60)
+    assert len(short) == 60 and "…" in short and short.endswith(".jsonl:12") and short.startswith("~/.claude")
+    assert ellipsize("short", 60) == "short"

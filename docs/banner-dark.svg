@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="spillage – your coding agents spill secrets. Find them, scrub them, stop the next one.">
+  <style>
+    .fade { animation: fade .8s cubic-bezier(.16,1,.3,1) both; }
+    .key { animation: key 6s ease-in-out infinite; }
+    .redact { opacity: 0; animation: redact 6s ease-in-out infinite; }
+    .ping { opacity: 0; transform-box: fill-box; transform-origin: center; animation: ping 6s ease-in-out infinite; }
+    .drip { animation: drip 6s cubic-bezier(.5,0,.75,0) infinite; }
+    @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @keyframes key { 0%, 38% { opacity: 1; } 46%, 92% { opacity: 0; } 100% { opacity: 1; } }
+    @keyframes redact { 0%, 40% { opacity: 0; } 48%, 90% { opacity: 1; } 98%, 100% { opacity: 0; } }
+    @keyframes ping { 0%, 46% { opacity: 0; transform: scale(.4); } 52% { opacity: 1; transform: scale(1); } 88% { opacity: 1; } 94%, 100% { opacity: 0; } }
+    @keyframes drip { 0%, 8% { transform: translateY(0); opacity: 0; } 12% { opacity: 1; } 30% { transform: translateY(58px); opacity: 1; } 34%, 100% { transform: translateY(58px); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .fade, .key, .drip { animation: none; } .redact, .ping { animation: none; opacity: 1; } .key { opacity: 0; } }
+  </style>
+  <defs><clipPath id="frame"><rect width="1280" height="360" rx="24"/></clipPath></defs>
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="360" fill="#0E0F13"/>
+    <rect x="800" y="52" width="410" height="256" rx="18" fill="#16181F" stroke="#262A35"/>
+    <circle cx="824" cy="72" r="5" fill="#262A35"/><circle cx="842" cy="72" r="5" fill="#262A35"/><circle cx="860" cy="72" r="5" fill="#262A35"/>
+    <text x="1190" y="77" text-anchor="end" font-family="'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9A97A0">~/.claude/projects/…/session.jsonl</text>
+    <rect class="fade" style="animation-delay:0.15s" x="830" y="92" width="230" height="12" rx="6" fill="#2A2E3A"/>
+    <rect class="fade" style="animation-delay:0.21s" x="854" y="122" width="180" height="12" rx="6" fill="#2A2E3A"/>
+    <rect class="fade" style="animation-delay:0.27s" x="854" y="152" width="270" height="12" rx="6" fill="#2A2E3A"/>
+
+    <g class="fade" style="animation-delay:0.33s">
+      <rect x="830" y="182" width="80" height="12" rx="6" fill="#2A2E3A"/>
+      <text x="922" y="193" font-family="'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="15" fill="#FF6B4A" class="key">sk-ant-api03-Xq7…</text>
+      <g class="redact">
+        <rect x="918" y="177" width="200" height="22" rx="6" fill="#FF6B4A" fill-opacity=".14"/>
+        <text x="928" y="193" font-family="'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="14" font-weight="600" fill="#FF6B4A">[REDACTED:anthropic]</text>
+      </g>
+      <circle class="ping" cx="1140" cy="188" r="6" fill="#3DDC97"/>
+    </g>
+    <rect class="fade" style="animation-delay:0.39s" x="854" y="212" width="150" height="12" rx="6" fill="#2A2E3A"/>
+    <rect class="fade" style="animation-delay:0.45s" x="830" y="242" width="250" height="12" rx="6" fill="#2A2E3A"/>
+    <rect class="fade" style="animation-delay:0.51s" x="854" y="272" width="200" height="12" rx="6" fill="#2A2E3A"/>
+    <g class="drip"><path transform="translate(1224 96) scale(0.3)" d="M32 6c9 13 18 23 18 34a18 18 0 0 1-36 0C14 29 23 19 32 6z" fill="#FF6B4A"/></g>
+  </g>
+
+  <g class="fade">
+    <path transform="translate(70 64) scale(0.9)" d="M32 6c9 13 18 23 18 34a18 18 0 0 1-36 0C14 29 23 19 32 6z" fill="#FF6B4A"/>
+    <text x="134" y="104" fill="#EDEBE6" font-family="'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="600" letter-spacing="-1">spillage</text>
+    <text x="70" y="190" fill="#EDEBE6" font-family="'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="60" font-weight="600" letter-spacing="-3">Your agents spill</text>
+    <text x="70" y="252" fill="#EDEBE6" font-family="'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="60" font-weight="600" letter-spacing="-3">secrets. <tspan fill="#FF6B4A">Mop up.</tspan></text>
+    <text x="72" y="302" fill="#9A97A0" font-family="'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17">Finds leaked keys in Claude Code, Codex and Gemini logs,</text>
+    <text x="72" y="330" fill="#9A97A0" font-family="'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17">scrubs them and blocks the next one.</text>
+  </g>
+</svg>
