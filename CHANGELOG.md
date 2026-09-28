@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-09-28
 
 ### Added
 - Your own secrets: the values in your projects' `.env` files are looked up verbatim in the logs, raw and JSON-escaped, which catches passwords and keys no pattern could. Reported by variable name and file, never by value. `--no-env` turns it off
