@@ -304,3 +304,69 @@ def test_install_warns_when_the_hook_cannot_run(home, capsys, monkeypatch):
 
 def test_verify_works_for_the_real_command():
     assert guard.verify() is None
+
+
+# ---- review fixes -------------------------------------------------------------------------
+
+def test_status_only_checks_installed_agents(home, capsys):
+    (home.root / ".claude").mkdir()
+    assert main(["guard", "install"]) == 0
+    assert main(["guard", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "Codex" not in out.split("guard installed")[-1]
+
+
+def test_gemini_settings_with_comments(home, capsys):
+    path = home.root / ".gemini/settings.json"
+    path.parent.mkdir()
+    path.write_text('{\n  // my theme\n  "theme": "GitHub", /* note */\n  "url": "http://x//y",\n}\n')
+    assert main(["guard", "install", "--agent", "gemini"]) == 0
+    out = capsys.readouterr().out
+    assert "comments in that file were dropped" in out
+    data = json.loads(path.read_text())
+    assert data["theme"] == "GitHub" and data["url"] == "http://x//y" and "BeforeAgent" in data["hooks"]
+    assert "// my theme" in (home.root / ".gemini/settings.json.spillage-backup").read_text()
+
+
+def test_one_broken_agent_doesnt_stop_the_others(home, capsys):
+    (home.root / ".claude").mkdir()
+    (home.root / ".codex").mkdir()
+    (home.root / ".codex/hooks.json").write_text("{ broken")
+    assert main(["guard", "install"]) == 2
+    out = capsys.readouterr().out
+    assert "Claude Code  guard installed" in out and "✗ Codex CLI" in out
+
+
+def test_local_scope_only_where_it_exists(home, capsys):
+    assert main(["guard", "install", "--agent", "codex", "--scope", "local"]) == 2
+    assert "no uncommitted per-project config" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("read_many_files", {"paths": ["."], "include": ["**/.env"]}),
+    ("read_many_files", {"include": [".env"]}),
+    ("mcp__filesystem__read_text_file", {"path": "/app/.env"}),
+    ("mcp__filesystem__read_multiple_files", {"paths": ["a.py", "/home/me/.ssh/id_ed25519"]}),
+    ("Bash", {"command": ["bash", "-lc", "cat .env", "bash"]}),
+    ("Bash", {"command": ["bash", "-l", "-c", "cat .env"]}),
+    ("Bash", {"command": ["/usr/bin/env", "bash", "-c", "printenv"]}),
+    ("Bash", {"command": ["zsh", "-lc", "gh auth token"]}),
+])
+def test_more_blocked_tool_calls(tool, tool_input):
+    assert guard.handle("tool", {"tool_name": tool, "tool_input": tool_input})[0] == 2
+
+
+def test_claude_matcher_sends_mcp_reads_to_the_hook():
+    import re as _re
+
+    assert _re.fullmatch(guard.TOOL_MATCHER, "mcp__filesystem__read_file")
+
+
+def test_uninstall_says_when_nothing_was_there(home, capsys):
+    assert main(["guard", "uninstall"]) == 0
+    assert "wasn't installed" in capsys.readouterr().out
+
+
+def test_strip_json_comments_keeps_strings():
+    text = '{"a": "// not a comment", "b": "/* nor this */", /* c */ "c": [1, 2,], }'
+    assert json.loads(guard.strip_json_comments(text)) == {"a": "// not a comment", "b": "/* nor this */", "c": [1, 2]}
