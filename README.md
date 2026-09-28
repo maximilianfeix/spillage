@@ -60,8 +60,14 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 ## Install
 
 ```bash
-pipx install git+https://github.com/maximilianfeix/spillage
+brew install maximilianfeix/tap/spillage
 spillage
+```
+
+Or with [pipx](https://pipx.pypa.io/):
+
+```bash
+pipx install git+https://github.com/maximilianfeix/spillage
 ```
 
 Or run it once without installing anything, with [uv](https://docs.astral.sh/uv/):
