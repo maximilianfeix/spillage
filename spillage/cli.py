@@ -331,18 +331,19 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
 
 
 def cmd_repo(args: argparse.Namespace) -> int:
-    from .repo import scan_repo
+    from .repo import REPO_IGNORE, scan_repo
 
     root = args.path.resolve()
     result = scan_repo(root, files=args.files, all_files=args.all_files, ignore=load_ignore())
     findings = result.findings
-    failed = bool(findings) or (args.strict and bool(result.transcripts))
+    strict_fail = args.strict and bool(result.transcripts)
+    failed = bool(findings) or strict_fail
     rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
 
     if args.format == "json":
-        data = result.scan.to_dict() if result.scan else {}
+        data = result.scan.to_dict()
         data["transcripts"] = result.transcripts
-        for f in data.get("findings", []):
+        for f in data["findings"]:
             for loc in f["locations"]:
                 loc["file"] = rel(loc["file"])
         print(json.dumps(data, indent=2, ensure_ascii=False))
@@ -353,21 +354,7 @@ def cmd_repo(args: argparse.Namespace) -> int:
         if args.format == "markdown":
             print(md)
         else:
-            for f in findings:
-                for loc in f.locations:
-                    line = f",line={loc.line}" if loc.line else ""
-                    rotate = f" Rotate it: {f.rotate_url}" if f.rotate_url else ""
-                    print(f"::error file={rel(loc.file)}{line},title=spillage: {f.rule_name}::"
-                          f"{f.rule_name} ({f.masked}, {f.fingerprint}) is in a committed agent transcript.{rotate}")
-            if args.strict:
-                for path, agent in result.transcripts.items():
-                    print(f"::warning file={path},title=spillage: agent transcript::"
-                          f"{agent_label(agent)} transcript is committed. Add it to .gitignore.")
-            summary = os.environ.get("GITHUB_STEP_SUMMARY")
-            if summary:
-                with open(summary, "a", encoding="utf-8") as fh:
-                    fh.write(md + "\n")
-            print(f"spillage: {len(result.transcripts)} transcript(s), {len(findings)} secret(s)")
+            _github_output(result, root, args.strict, md)
         return EXIT_FOUND if failed else EXIT_CLEAN
 
     p = Painter(not args.no_color and supports_color(sys.stdout))
@@ -385,13 +372,48 @@ def cmd_repo(args: argparse.Namespace) -> int:
             print(f"      {path}  {p(agent_label(agent), 'dim')}")
         if n > 20:
             print(p(f"      … and {n - 20} more", "dim"))
-    if result.scan and (findings or args.all_files):
-        print(render(result.scan, "text", color=p.color, repo=True))
+    if findings or args.all_files:
+        print(render(result.scan, "text", color=p.color, repo=True, repo_ignore=REPO_IGNORE))
     elif result.transcripts:
-        print(f"\n  {p('✓', 'green')} No secrets in them. Consider adding them to .gitignore anyway.\n")
-    else:
-        print()
+        print(f"\n  {p('✓', 'green')} No secrets in them.")
+    if strict_fail:
+        print(p("\n  ✗ --strict: committed agent transcripts fail even without secrets. "
+                "Remove them from git and add them to .gitignore.", "red"))
+    print()
     return EXIT_FOUND if failed else EXIT_CLEAN
+
+
+def _github_output(result, root: Path, strict: bool, md: str) -> None:
+    """Annotations (paths relative to the workspace, which is what GitHub resolves them
+    against), the job summary, and step outputs."""
+    base = Path(os.environ.get("GITHUB_WORKSPACE") or Path.cwd()).resolve()
+
+    def ws(path) -> str:
+        try:
+            return os.path.relpath(Path(path).resolve(), base).replace(os.sep, "/")
+        except ValueError:
+            return str(path)
+
+    transcripts = {str((root / r).resolve()) for r in result.transcripts}
+    for f in result.findings:
+        for loc in f.locations:
+            line = f",line={loc.line}" if loc.line else ""
+            rotate = f" Rotate it: {f.rotate_url}" if f.rotate_url else ""
+            in_transcript = str(Path(loc.file).resolve()) in transcripts
+            where = "a committed agent transcript" if in_transcript else "a committed file"
+            print(f"::error file={ws(loc.file)}{line},title=spillage: {f.rule_name}::"
+                  f"{f.rule_name} ({f.masked}, {f.fingerprint}) is in {where}.{rotate}")
+    if strict:
+        for path, agent in result.transcripts.items():
+            print(f"::warning file={ws(root / path)},title=spillage: agent transcript::"
+                  f"{agent_label(agent)} transcript is committed. Add it to .gitignore.")
+    for name, value in (("GITHUB_STEP_SUMMARY", md + "\n"),
+                        ("GITHUB_OUTPUT", f"transcripts={len(result.transcripts)}\nsecrets={len(result.findings)}\n")):
+        target = os.environ.get(name)
+        if target:
+            with open(target, "a", encoding="utf-8") as fh:
+                fh.write(value)
+    print(f"spillage: {len(result.transcripts)} transcript(s), {len(result.findings)} secret(s)")
 
 
 def _repo_markdown(result, rel) -> str:

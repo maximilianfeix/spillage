@@ -47,17 +47,4 @@ runs:
         args=(repo "$SPILLAGE_PATH" --format github)
         [ "$SPILLAGE_STRICT" = "true" ] && args+=(--strict)
         [ "$SPILLAGE_ALL" = "true" ] && args+=(--all-files)
-        set +e
         "$SPILLAGE_PY" -m spillage "${args[@]}"
-        code=$?
-        set -e
-        json=(repo "$SPILLAGE_PATH" --format json)
-        [ "$SPILLAGE_ALL" = "true" ] && json+=(--all-files)
-        "$SPILLAGE_PY" -m spillage "${json[@]}" > "$RUNNER_TEMP/spillage.json" || true
-        "$SPILLAGE_PY" - "$RUNNER_TEMP/spillage.json" >> "$GITHUB_OUTPUT" <<'PY'
-        import json, sys
-        d = json.load(open(sys.argv[1]))
-        print(f"transcripts={len(d.get('transcripts', {}))}")
-        print(f"secrets={d.get('summary', {}).get('findings', 0)}")
-        PY
-        exit $code
