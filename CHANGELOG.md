@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.1] - 2026-09-28
+
+### Fixed
+- `guard` hooks didn't run when spillage was installed with Homebrew or pipx: the hook called `python -m spillage` with an interpreter that can't import it. Hooks now call the installed `spillage` launcher, and `guard install` runs the hook once to check it works. Run `spillage guard install` again to update existing hooks
+
 ## [0.5.0] - 2026-09-28
 
 ### Added

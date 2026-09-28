@@ -283,3 +283,24 @@ def test_blocked_prompts_count_as_prompts(home):
     home.claude_session(records=[{"type": "queue-operation", "operation": "enqueue", "content": fakes.npm()}])
     (f,) = Scanner(workers=1).scan(build_sources(["claude"])).findings
     assert f.origins == [Origin.PROMPT]
+
+
+def test_hook_command_prefers_the_launcher(monkeypatch, tmp_path):
+    launcher = tmp_path / "bin with space" / "spillage"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(guard.shutil, "which", lambda name: str(launcher))
+    assert guard.hook_command("prompt") == f'"{launcher.resolve()}" hook prompt'
+    monkeypatch.setattr(guard.shutil, "which", lambda name: None)
+    assert guard.hook_command("tool").endswith("-m spillage hook tool")
+    assert guard.MARK in guard.hook_command("tool")
+
+
+def test_install_warns_when_the_hook_cannot_run(home, capsys, monkeypatch):
+    monkeypatch.setattr(guard, "hook_command", lambda event: "definitely-not-a-command-xyz hook prompt")
+    assert main(["guard", "install", "--agent", "claude"]) == 2
+    assert "doesn't run" in capsys.readouterr().out
+
+
+def test_verify_works_for_the_real_command():
+    assert guard.verify() is None
