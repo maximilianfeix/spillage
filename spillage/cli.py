@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from . import __version__
+from . import __version__, guard
 from .models import Severity
 from .reporters import agent_label, formats, render
 from .rules import get_rules
@@ -80,6 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     scrub.add_argument("--include-active", action="store_true",
                        help="also touch files written in the last minute (probably a running session)")
 
+    guard = sub.add_parser("guard", help="install Claude Code hooks that block leaks before they happen")
+    guard.add_argument("action", choices=["install", "uninstall", "status"])
+    guard.add_argument("--scope", choices=["user", "project", "local"], default="user",
+                       help="user: ~/.claude/settings.json (default), project: .claude/settings.json, "
+                            "local: .claude/settings.local.json")
+
+    hook = sub.add_parser("hook")  # called by the agent, not by you
+    hook.add_argument("event", choices=["prompt", "tool", "session-end"])
+
     sub.add_parser("agents", help="show which agents' logs were found and where")
     sub.add_parser("rules", help="list the detection rules")
 
@@ -92,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    commands = {"scan", "scrub", "check", "agents", "rules", "ignore"}
+    commands = {"scan", "scrub", "check", "guard", "hook", "agents", "rules", "ignore"}
     if not argv or (argv[0] not in commands and argv[0] not in ("-h", "--help", "-V", "--version")):
         argv = ["scan"] + argv
     args = parser.parse_args(argv)
@@ -100,6 +109,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return {
             "scan": cmd_scan,
             "scrub": cmd_scrub,
+            "guard": cmd_guard,
+            "hook": lambda a: guard.run_hook(a.event),
             "check": cmd_check,
             "agents": cmd_agents,
             "rules": cmd_rules,
@@ -181,6 +192,32 @@ def cmd_scrub(args: argparse.Namespace) -> int:
         print(p("  Removing them locally doesn't un-send them. Rotate them if you haven't yet.", "dim"))
     print()
     return EXIT_USAGE if report.failed else EXIT_CLEAN
+
+
+def cmd_guard(args: argparse.Namespace) -> int:
+    p = Painter(supports_color(sys.stdout))
+    path = guard.settings_path(args.scope)
+    where = short_path(str(path))
+    if args.action == "install":
+        changed = guard.install(path)
+        if changed:
+            print(f"  {p('✓', 'green')} guard installed in {where}")
+        else:
+            print(f"  {p('✓', 'green')} guard was already installed in {where}")
+        print(p("    prompts with a secret in them are blocked before they're sent", "dim"))
+        print(p("    reading .env files, keys and credential files is blocked, also via Bash", "dim"))
+        print(p("    when a session ends, its transcript is scrubbed", "dim"))
+        print(p("    takes effect in new Claude Code sessions. Undo: spillage guard uninstall", "dim"))
+    elif args.action == "uninstall":
+        changed = guard.uninstall(path)
+        print(f"  {p('✓', 'green')} guard removed from {where}" if changed else f"  guard wasn't installed in {where}")
+    else:
+        state = guard.status(path)
+        for event, on in state.items():
+            mark = p("● on ", "green") if on else p("○ off", "gray")
+            print(f"  {mark}  {event:<17} {where}")
+        return EXIT_CLEAN if all(state.values()) else EXIT_FOUND
+    return EXIT_CLEAN
 
 
 def cmd_check(args: argparse.Namespace) -> int:

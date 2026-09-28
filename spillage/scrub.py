@@ -124,6 +124,29 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
+def scrub_file(path: Path, ignore: Iterable[str] = (), rules: Optional[Sequence[Rule]] = None) -> int:
+    """Redact every secret in one file. Used when a session ends, so no scan result needed."""
+    rules = list(rules) if rules is not None else get_rules()
+    text = read_exact(path)
+    if not text:
+        return 0
+    kind = {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
+    is_json = kind != "text"
+    skip = set(ignore)
+    targets = set()
+    for _, match in find_in_text(text, rules):
+        fp = fingerprint(decode_json_fragment(match.secret) if is_json else match.secret)
+        if fp not in skip:
+            targets.add(fp)
+    if not targets:
+        return 0
+    new, count = redact_text(text, targets, rules, is_json)
+    if count and _still_valid(text, new, kind):
+        write_atomic(path, new)
+        return count
+    return 0
+
+
 def scrub(
     findings: Sequence[Finding],
     rules: Optional[Sequence[Rule]] = None,

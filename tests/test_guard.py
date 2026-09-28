@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import io
+import json
+import subprocess
+import sys
+
+import fakes
+import pytest
+
+from spillage import guard
+from spillage.cli import main
+
+# ---- deciding ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path", [
+    ".env", "/app/.env", "/app/.env.local", "/app/.env.production", "prod.env", "~/.aws/credentials",
+    "/home/me/.ssh/id_ed25519", "C:\\Users\\me\\.ssh\\id_rsa", "server.pem", "tls.key", ".npmrc",
+    ".git-credentials", "/app/secrets.yaml", "service-account-prod.json", "prod.tfvars",
+    "/Users/me/.docker/config.json", ".kube/config",
+])
+def test_secret_files(path):
+    assert guard.is_secret_file(path)
+
+
+@pytest.mark.parametrize("path", [
+    ".env.example", ".env.sample", "/app/.env.template", "id_ed25519.pub", "README.md", "src/env.py",
+    "environment.ts", "keys.py", "/app/config.json", "credentials_test.go", ".envrc.example",
+])
+def test_not_secret_files(path):
+    assert not guard.is_secret_file(path)
+
+
+@pytest.mark.parametrize("command", [
+    "cat .env", "cat /app/.env.local | grep KEY", "head -5 ~/.aws/credentials", "less config/secrets.yml",
+    "printenv", "env", "env | sort", "export -p", "gh auth token", "sudo cat /etc/ssl/private/server.key",
+    "grep API .env", "rg -n TOKEN .env.production", "source .env && echo $KEY",
+    "security find-generic-password -s github -w", "aws configure get aws_secret_access_key",
+    "cat /proc/self/environ", "echo $(cat .env)", "python3 -c 'print(1)' < .env",
+])
+def test_risky_commands(command):
+    assert guard.risky_command(command)
+
+
+@pytest.mark.parametrize("command", [
+    "ls -la", "cat README.md", "env FOO=1 npm test", "set -euo pipefail", "cp .env.example .env",
+    "git status", "printenv HOME", "grep -r TODO src", "echo 'API_KEY=' >> .env.example", "npm run dev",
+])
+def test_harmless_commands(command):
+    assert guard.risky_command(command) is None
+
+
+def test_prompt_with_secret_is_blocked():
+    code, msg = guard.handle("prompt", {"prompt": f"use {fakes.github()} for the api"})
+    assert code == 2
+    assert "GitHub token" in msg and "environment variable" in msg
+
+
+def test_prompt_message_is_masked():
+    key = fakes.anthropic()
+    _, msg = guard.handle("prompt", {"prompt": key})
+    assert key not in msg and key[:6] in msg
+
+
+def test_prompt_allow_word():
+    assert guard.handle("prompt", {"prompt": f"{fakes.github()} {guard.ALLOW_WORD}"}) == (0, "")
+
+
+def test_clean_prompt_passes():
+    assert guard.handle("prompt", {"prompt": "refactor the login page"}) == (0, "")
+
+
+@pytest.mark.parametrize("tool,tool_input,blocked", [
+    ("Read", {"file_path": "/app/.env"}, True),
+    ("Read", {"file_path": "/app/.env.example"}, False),
+    ("Read", {"file_path": "/app/main.py"}, False),
+    ("Grep", {"pattern": "KEY", "path": "/app/.env"}, True),
+    ("Grep", {"pattern": "KEY", "glob": "*.pem"}, True),
+    ("Grep", {"pattern": "KEY", "path": "/app/src"}, False),
+    ("Bash", {"command": "cat .env"}, True),
+    ("Bash", {"command": "pytest -q"}, False),
+    ("Edit", {"file_path": "/app/.env"}, False),
+    ("Read", "not a dict", False),
+])
+def test_tool_decisions(tool, tool_input, blocked):
+    code, msg = guard.handle("tool", {"tool_name": tool, "tool_input": tool_input})
+    assert (code == 2) is blocked
+    assert bool(msg) is blocked
+
+
+def test_unknown_event():
+    with pytest.raises(ValueError):
+        guard.handle("other", {})
+
+
+def test_run_hook_tolerates_garbage():
+    assert guard.run_hook("prompt", io.StringIO("not json"), io.StringIO()) == 0
+    assert guard.run_hook("prompt", io.StringIO("[1,2]"), io.StringIO()) == 0
+    assert guard.run_hook("tool", io.StringIO(""), io.StringIO()) == 0
+
+
+def test_run_hook_as_a_real_process():
+    """The way Claude Code calls it: JSON on stdin, exit code 2 and a reason on stderr."""
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "cat .env"}}
+    proc = subprocess.run(
+        [sys.executable, "-m", "spillage", "hook", "tool"],
+        input=json.dumps(event), capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 2
+    assert "spillage blocked" in proc.stderr
+
+
+# ---- installing -------------------------------------------------------------------------
+
+def test_install_into_empty_settings(tmp_path):
+    path = tmp_path / "settings.json"
+    assert guard.install(path)
+    data = json.loads(path.read_text())
+    assert "spillage hook prompt" in data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert data["hooks"]["PreToolUse"][0]["matcher"] == guard.TOOL_MATCHER
+    assert guard.status(path) == {"UserPromptSubmit": True, "PreToolUse": True, "SessionEnd": True}
+    assert "session-end" in data["hooks"]["SessionEnd"][0]["hooks"][0]["command"]
+
+
+def test_install_keeps_other_settings_and_hooks(tmp_path):
+    path = tmp_path / "settings.json"
+    other = {"matcher": "Bash", "hooks": [{"type": "command", "command": "my-linter"}]}
+    path.write_text(json.dumps({"model": "opus", "hooks": {"PreToolUse": [other]}}))
+    guard.install(path)
+    data = json.loads(path.read_text())
+    assert data["model"] == "opus"
+    assert data["hooks"]["PreToolUse"][0] == other and len(data["hooks"]["PreToolUse"]) == 2
+    assert (tmp_path / "settings.json.spillage-backup").exists()
+
+
+def test_install_is_idempotent(tmp_path):
+    path = tmp_path / "settings.json"
+    assert guard.install(path)
+    before = path.read_text()
+    assert not guard.install(path)
+    assert path.read_text() == before
+
+
+def test_uninstall_leaves_the_rest(tmp_path):
+    path = tmp_path / "settings.json"
+    other = {"hooks": [{"type": "command", "command": "notify-me"}]}
+    path.write_text(json.dumps({"theme": "dark", "hooks": {"UserPromptSubmit": [other]}}))
+    guard.install(path)
+    assert guard.uninstall(path)
+    data = json.loads(path.read_text())
+    assert data == {"theme": "dark", "hooks": {"UserPromptSubmit": [other]}}
+    assert not guard.uninstall(path)
+
+
+def test_uninstall_removes_empty_hooks(tmp_path):
+    path = tmp_path / "settings.json"
+    guard.install(path)
+    guard.uninstall(path)
+    assert json.loads(path.read_text()) == {}
+
+
+def test_broken_settings_are_not_touched(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{ nope")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        guard.install(path)
+    assert path.read_text() == "{ nope"
+
+
+def test_settings_scopes(tmp_path, home):
+    assert guard.settings_path("user") == home.root / ".claude" / "settings.json"
+    assert guard.settings_path("project", tmp_path) == tmp_path / ".claude" / "settings.json"
+    assert guard.settings_path("local", tmp_path) == tmp_path / ".claude" / "settings.local.json"
+    with pytest.raises(ValueError):
+        guard.settings_path("global")
+
+
+def test_cli_guard_roundtrip(home, capsys):
+    assert main(["guard", "status"]) == 1
+    assert main(["guard", "install"]) == 0
+    assert "guard installed" in capsys.readouterr().out
+    assert main(["guard", "install"]) == 0
+    assert "already installed" in capsys.readouterr().out
+    assert main(["guard", "status"]) == 0
+    assert main(["guard", "uninstall"]) == 0
+    assert "guard removed" in capsys.readouterr().out
+
+
+def test_cli_hook(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": fakes.npm()})))
+    assert main(["hook", "prompt"]) == 2
+    assert "npm access token" in capsys.readouterr().err
+
+
+# ---- session end ------------------------------------------------------------------------
+
+def test_session_end_scrubs_the_transcript(home, tmp_path):
+    gh = fakes.github()
+    t = home.claude_session(records=[
+        {"type": "queue-operation", "operation": "enqueue", "content": f"deploy with {gh}"},
+        {"type": "user", "message": {"content": "hello"}},
+    ])
+    assert guard.handle("session-end", {"transcript_path": str(t)}) == (0, "")
+    text = t.read_text()
+    assert gh not in text and "[REDACTED:github-token:" in text
+    for line in text.splitlines():
+        json.loads(line)
+
+
+def test_session_end_respects_the_ignore_list(home):
+    from spillage.models import fingerprint
+    from spillage.scanner import add_ignore
+
+    gh = fakes.github()
+    add_ignore([fingerprint(gh)])
+    t = home.claude_session(records=[{"type": "user", "message": {"content": gh}}])
+    guard.handle("session-end", {"transcript_path": str(t)})
+    assert gh in t.read_text()
+
+
+@pytest.mark.parametrize("payload", [{}, {"transcript_path": 5}, {"transcript_path": "/nope/x.jsonl"},
+                                     {"transcript_path": "/etc/hosts"}])
+def test_session_end_ignores_odd_payloads(payload):
+    assert guard.handle("session-end", payload) == (0, "")
+
+
+def test_blocked_prompts_count_as_prompts(home):
+    from spillage.models import Origin
+    from spillage.scanner import Scanner
+    from spillage.sources import build_sources
+
+    home.claude_session(records=[{"type": "queue-operation", "operation": "enqueue", "content": fakes.npm()}])
+    (f,) = Scanner(workers=1).scan(build_sources(["claude"])).findings
+    assert f.origins == [Origin.PROMPT]
