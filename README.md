@@ -46,7 +46,7 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 - [What it finds](#what-it-finds)
 - [Commands](#commands) · [Reports](#reports)
 - [Scrub](#scrub)
-- [Guard](#guard)
+- [Guard](#guard) · [Watch](#watch)
 - [Committed transcripts](#repo): GitHub Action, pre-commit
 - [How it works](#how-it-works)
 - [From Python](#from-python)
@@ -131,6 +131,7 @@ spillage scan --min-severity high skip the low and medium stuff
 spillage scan -v                  every place a secret was seen, not just the first
 spillage scrub                    remove what it found from the logs (asks first)
 spillage guard install            agent hooks that block the next leak
+spillage watch                    tell me the moment a new key lands in any agent's logs
 spillage repo                     agent transcripts committed to this git repo, and secrets in them
 spillage check "some text"        scan a string, or stdin: pbpaste | spillage check
 spillage ignore <fingerprint>     stop reporting a secret (a test key, say)
@@ -200,6 +201,24 @@ The config goes where each agent expects it: `~/.claude/settings.json`, `~/.code
 
 > [!NOTE]
 > Codex runs new hooks only after you've trusted them once: open Codex and run `/hooks`. Claude Code and Codex were tested end to end with their real CLIs; Gemini CLI follows its documented hook format.
+
+<a id="watch"></a>
+
+## Watch
+
+```bash
+spillage watch                  # report new secrets the moment an agent writes them
+spillage watch --scrub          # and scrub the file once it's been quiet for 90 s
+```
+
+Hooks only exist for Claude Code, Codex and Gemini. `watch` covers every agent, Cursor, Cline and Aider included: it keeps an eye on all their logs, reads only what was appended since the last look, and shows a desktop notification (macOS and Linux) plus a line in the terminal as soon as a key lands:
+
+```
+  09:12:53  [HIGH]     Firecrawl API key  fc-bcc…(35 chars)  Claude Code · ~/code/shop
+            a tool printed it (a file read or a command) · rotate: https://www.firecrawl.dev/app/api-keys
+```
+
+Keys that were already there when it started aren't reported again, that's what `spillage scan` is for. It polls every 2 seconds (`--interval`), which costs next to nothing and keeps spillage free of dependencies.
 
 <a id="repo"></a>
 
