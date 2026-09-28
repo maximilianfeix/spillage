@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.4] - 2026-09-28
+
+### Fixed
+- an empty value in a `.env` file (`API_KEY=`) crashed `scan`, `scrub` and `watch`. A `.env` file that can't be parsed is now skipped instead of stopping anything
+
 ## [0.6.3] - 2026-09-28
 
 ### Fixed

@@ -128,6 +128,9 @@ def test_collect_labels(tmp_path):
     ('PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----', None),
     ("DATABASE_URL=postgres://app:Xk3pQ9zLm2w@db:5432/x", "postgres://app:Xk3pQ9zLm2w@db:5432/x"),
     ("stripeSecretKey=Xk3pQ9zLm2wQ7r", "Xk3pQ9zLm2wQ7r"),
+    ("API_KEY=", None),
+    ("API_KEY=''", None),
+    ('SECRET_TOKEN="', None),
 ])
 def test_parse_edge_cases(line, expected):
     got = parse(line)

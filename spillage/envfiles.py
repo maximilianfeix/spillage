@@ -61,7 +61,7 @@ def is_secret_name(name: str) -> bool:
 def _value(raw: str) -> str:
     """The value part of a line: quotes removed, a trailing comment cut off. An opening quote
     that doesn't close on the same line (a multi-line PEM, say) gives an empty value."""
-    if raw[:1] in "\"'":
+    if raw and raw[0] in "\"'":
         end = raw.find(raw[0], 1)
         return raw[1:end] if end != -1 else ""
     if " #" in raw:
@@ -102,7 +102,11 @@ def collect(projects: Iterable[Path], limit: int = 2000) -> Dict[str, str]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for name, value in parse(text).items():
+        try:
+            found = parse(text)
+        except Exception:  # an odd .env file must never stop a scan
+            continue
+        for name, value in found.items():
             values.setdefault(value, f"{name} from {short_path(str(path))}")
             if len(values) >= limit:
                 return values
