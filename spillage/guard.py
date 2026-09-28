@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -256,10 +257,31 @@ def settings_path(scope: str = "user", cwd: Optional[Path] = None, agent: str = 
     raise ValueError(f"unknown scope {scope!r} (user, project or local)")
 
 
+def _quote(path: str) -> str:
+    return f'"{path}"' if " " in path else path
+
+
 def hook_command(event: str) -> str:
-    exe = sys.executable
-    quoted = f'"{exe}"' if " " in exe else exe
-    return f"{quoted} -m spillage hook {event}"
+    """The command the agent runs. The installed `spillage` launcher when there is one: with
+    Homebrew or pipx the package isn't importable from a bare `python -m`."""
+    launcher = shutil.which("spillage")
+    if launcher:
+        return f"{_quote(str(Path(launcher).resolve()))} hook {event}"
+    return f"{_quote(sys.executable)} -m spillage hook {event}"
+
+
+def verify(event: str = "prompt") -> Optional[str]:
+    """Run the hook command once the way the agent will. Returns an error message or None."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(hook_command(event), shell=True, input='{"prompt": "hello"}',
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if proc.returncode != 0:
+        return (proc.stderr or proc.stdout or f"exit code {proc.returncode}").strip().splitlines()[-1]
+    return None
 
 
 def _load(path: Path) -> dict:
@@ -284,8 +306,6 @@ def _save(path: Path, data: dict) -> None:
         json.dump(data, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     if path.exists():
-        import shutil
-
         shutil.copymode(str(path), tmp)
     os.replace(tmp, str(path))
 

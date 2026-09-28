@@ -255,6 +255,12 @@ def cmd_guard(args: argparse.Namespace) -> int:
             mark = p("● on ", "green") if on else (p("◐ part", "yellow") if any(state.values()) else p("○ off", "gray"))
             print(f"  {mark}  {target.label:<12} {p(where, 'dim')}")
     if args.action == "install":
+        problem = guard.verify()
+        if problem:
+            print(p(f"\n  ✗ the hook command doesn't run: {problem}", "red"))
+            print(p(f"    {guard.hook_command('prompt')}", "dim"))
+            print(p("    Make sure `spillage` is on your PATH (pipx or brew), then run this again.", "dim"))
+            return EXIT_USAGE
         print()
         print(p("    prompts with a secret in them are blocked before they're sent", "dim"))
         print(p("    reading .env files, keys and credential files is blocked, also via the shell", "dim"))
