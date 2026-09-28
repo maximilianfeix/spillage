@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- `spillage repo`: agent transcripts committed to a git repository and the secrets in them. `--strict` fails on any transcript, `--all-files` scans every tracked file, `-f github` writes annotations and a job summary
+- a GitHub Action (`uses: maximilianfeix/spillage@v0.3.0`) and pre-commit hooks (`spillage`, `no-agent-transcripts`)
 - Aider (`.aider.chat.history.md`, `.aider.input.history`) and SpecStory (`.specstory/history/`). They write into project folders, so those are found through the working directories of your Claude Code and Codex sessions. Markdown logs get origins too: `####` lines are prompts in Aider, quoted `>` lines tool output
 
 ## [0.2.0] - 2026-09-28
