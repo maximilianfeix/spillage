@@ -6,8 +6,8 @@ the transcripts git tracks (SpecStory, Aider, Claude Code, Codex, ...) and scans
 
 from __future__ import annotations
 
-import fnmatch
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,51 +15,55 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from .models import Finding
 from .rules import Rule
-from .scanner import Scanner, ScanResult
+from .scanner import Scanner, ScanResult, load_ignore
 from .sources import Aider, PathSource, Source, SpecStory
 
-# (glob on the repo-relative path, agent name)
+# (regex on the repo-relative path, agent). Anchored on path segments so an unrelated
+# `data/rollout-metrics.jsonl` doesn't count. .pre-commit-hooks.yaml uses TRANSCRIPT_REGEX
+# below verbatim, and a test keeps the two in sync.
 TRANSCRIPTS = (
-    (".specstory/history/*.md", "specstory"),
-    ("*/.specstory/history/*.md", "specstory"),
-    (".aider.chat.history.md", "aider"),
-    ("*/.aider.chat.history.md", "aider"),
-    (".aider.input.history", "aider"),
-    ("*/.aider.input.history", "aider"),
-    (".claude/*.jsonl", "claude"),
-    (".claude/**/*.jsonl", "claude"),
-    ("*/.claude/projects/*/*.jsonl", "claude"),
-    ("*rollout-*.jsonl", "codex"),
-    (".codex/*.jsonl", "codex"),
-    (".gemini/*/chats/*.json", "gemini"),
-    (".continue/sessions/*.json", "continue"),
-    ("*api_conversation_history.json", "cline"),
-    ("*cline_task_*.md", "cline"),
+    (r"(^|/)\.specstory/history/[^/]+\.md$", "specstory"),
+    (r"(^|/)\.aider\.chat\.history\.md$", "aider"),
+    (r"(^|/)\.aider\.input\.history$", "aider"),
+    (r"(^|/)\.claude/.+\.jsonl$", "claude"),
+    (r"(^|/)\.codex/.+\.jsonl$", "codex"),
+    (r"(^|/)rollout-\d{4}-\d\d-\d\dT[\d-]+-[0-9a-f-]+\.jsonl$", "codex"),
+    (r"(^|/)\.gemini/(.+/)?chats/[^/]+\.json$", "gemini"),
+    (r"(^|/)\.continue/sessions/[^/]+\.json$", "continue"),
+    (r"(^|/)api_conversation_history\.json$", "cline"),
+    (r"(^|/)cline_task_[a-z]{3}-\d{1,2}-\d{4}[^/]*\.md$", "cline"),
 )
+_COMPILED = [(re.compile(p), agent) for p, agent in TRANSCRIPTS]
+TRANSCRIPT_REGEX = "|".join(f"({p})" for p, _ in TRANSCRIPTS)
+
+# fingerprints to ignore for this repo, one per line, committed with it
+REPO_IGNORE = ".spillageignore"
 
 
 def transcript_agent(relpath: str) -> Optional[str]:
     rel = relpath.replace("\\", "/")
-    for pattern, agent in TRANSCRIPTS:
-        if fnmatch.fnmatch(rel, pattern):
+    for pattern, agent in _COMPILED:
+        if pattern.search(rel):
             return agent
     return None
 
 
 def tracked_files(repo: Path) -> List[str]:
     try:
-        out = subprocess.run(
-            ["git", "-C", str(repo), "ls-files", "-z"], capture_output=True, check=True, timeout=120
-        ).stdout
+        proc = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"], capture_output=True, timeout=120)
     except FileNotFoundError:
         raise ValueError("git isn't installed") from None
-    except subprocess.CalledProcessError:
-        raise ValueError(f"{repo} isn't a git repository") from None
-    return [p for p in out.decode("utf-8", errors="replace").split("\0") if p]
+    except subprocess.TimeoutExpired:
+        raise ValueError(f"git ls-files in {repo} took longer than 2 minutes") from None
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        raise ValueError(f"git ls-files failed in {repo}: {err[-1] if err else 'exit ' + str(proc.returncode)}")
+    return [p for p in proc.stdout.decode("utf-8", errors="replace").split("\0") if p]
 
 
 class _Files(PathSource):
-    """A fixed list of files, read the way a given agent's logs are read."""
+    """A fixed list of files, read the way a given agent's logs are read. `document()` hands
+    the flavor adapter to Document, so origin and session come from it."""
 
     def __init__(self, paths: Iterable[Path], flavor: Source, name: str) -> None:
         super().__init__(paths)
@@ -68,18 +72,6 @@ class _Files(PathSource):
 
     def document(self, path, text):
         return self.flavor.document(path, text)
-
-    def origin(self, record, path):
-        return self.flavor.origin(record, path)
-
-    def text_origin_at(self, path, text, offset):
-        return self.flavor.text_origin_at(path, text, offset)
-
-    def update_state(self, record, state):
-        self.flavor.update_state(record, state)
-
-    def session_for(self, path, state):
-        return self.flavor.session_for(path, state)
 
 
 def _flavor(agent: str) -> Source:
@@ -100,12 +92,16 @@ def _flavor(agent: str) -> Source:
 @dataclass
 class RepoResult:
     root: Path
+    scan: ScanResult
     transcripts: Dict[str, str] = field(default_factory=dict)  # relpath -> agent
-    scan: Optional[ScanResult] = None
 
     @property
     def findings(self) -> List[Finding]:
-        return self.scan.findings if self.scan else []
+        return self.scan.findings
+
+
+def repo_ignore(root: Path) -> set:
+    return load_ignore(root / REPO_IGNORE)
 
 
 def scan_repo(
@@ -115,7 +111,8 @@ def scan_repo(
     rules: Optional[Sequence[Rule]] = None,
     ignore: Iterable[str] = (),
 ) -> RepoResult:
-    """`files` (repo-relative or absolute) limits the scan, as pre-commit passes them."""
+    """`files` limits the scan, the way pre-commit passes them: absolute, or relative to the
+    current folder. Files outside the repository are skipped."""
     root = root.resolve()
     if files:
         rels = []
@@ -123,17 +120,19 @@ def scan_repo(
             p = Path(f)
             p = p if p.is_absolute() else (Path.cwd() / p)
             try:
-                rels.append(os.path.relpath(p.resolve(), root).replace(os.sep, "/"))
-            except ValueError:
+                rel = os.path.relpath(p.resolve(), root).replace(os.sep, "/")
+            except ValueError:  # another drive on Windows
                 continue
+            if not rel.startswith("../") and rel != "..":
+                rels.append(rel)
     else:
         rels = tracked_files(root)
-    result = RepoResult(root)
+    transcripts: Dict[str, str] = {}
     groups: Dict[str, List[Path]] = {}
     for rel in rels:
         agent = transcript_agent(rel)
         if agent:
-            result.transcripts[rel] = agent
+            transcripts[rel] = agent
         elif not all_files:
             continue
         path = root / rel
@@ -142,5 +141,6 @@ def scan_repo(
     sources: List[Source] = [
         _Files(paths, _flavor(agent), agent if agent != "file" else "path") for agent, paths in sorted(groups.items())
     ]
-    result.scan = Scanner(rules=rules, ignore=ignore, workers=1).scan(sources)
-    return result
+    skip = set(ignore) | repo_ignore(root)
+    scan = Scanner(rules=rules, ignore=skip, workers=1).scan(sources)
+    return RepoResult(root, scan, transcripts)

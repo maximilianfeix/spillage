@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.2] - 2026-09-28
+
+### Fixed
+- `spillage repo` and the pre-commit hooks now use one list of transcript patterns (a test keeps `.pre-commit-hooks.yaml` in sync), matched on path segments: `data/rollout-metrics.jsonl` or `docs/cline_task_template.md` no longer count as transcripts, nested `.claude/` and `.codex/` logs and Cline exports do
+- GitHub annotations point at the right file when the Action's `path` is a subfolder; with `all-files` a source file isn't called a transcript anymore
+- the Action scans once instead of twice and can't lose its exit code
+- git errors say what git said (e.g. "dubious ownership") instead of "isn't a git repository"
+- `--files` outside the repository are ignored; `--strict` says why it failed
+
+### Added
+- `.spillageignore` in a repository: fingerprints to ignore there, also in CI
+
 ## [0.6.1] - 2026-09-28
 
 ### Fixed
