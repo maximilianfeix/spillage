@@ -957,10 +957,11 @@ class AgentConfig(Source):
                 for path in sorted(root.glob(pattern)) if "*" in pattern else [root / pattern]:
                     try:
                         usable = path.is_file() and not path.is_symlink()
+                        real = path.resolve()  # ~ and a project folder can reach one file two ways
                     except OSError:
                         continue
-                    if usable and path not in seen:
-                        seen.add(path)
+                    if usable and real not in seen:
+                        seen.add(real)
                         yield path
 
     def document(self, path: Path, text: str) -> Document:

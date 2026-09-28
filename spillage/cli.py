@@ -110,8 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
     repo.add_argument("--files", nargs="*", metavar="FILE", help="only these files (what pre-commit passes)")
     repo.add_argument("--all-files", action="store_true", help="scan every tracked file, not just transcripts")
     repo.add_argument("--strict", action="store_true", help="fail on any committed transcript, even a clean one")
-    repo.add_argument("-f", "--format", choices=["text", "json", "markdown", "github"], default="text",
-                      help="github: annotations plus a job summary, for Actions")
+    repo.add_argument("-f", "--format", choices=["text", "json", "markdown", "github", "sarif"], default="text",
+                      help="github: annotations plus a job summary, for Actions; sarif: for code scanning")
+    repo.add_argument("--sarif", type=Path, metavar="FILE",
+                      help="also write a SARIF report here, e.g. for github/codeql-action/upload-sarif")
     repo.add_argument("--no-color", action="store_true", help="plain output")
 
     sub.add_parser("agents", help="show which agents' logs were found and where")
@@ -364,6 +366,13 @@ def cmd_repo(args: argparse.Namespace) -> int:
     strict_fail = args.strict and bool(result.transcripts)
     failed = bool(findings) or strict_fail
     rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
+    if args.sarif or args.format == "sarif":
+        sarif = _repo_sarif(result, root, args.strict)
+        if args.sarif:
+            args.sarif.write_text(sarif + "\n", encoding="utf-8")
+        if args.format == "sarif":
+            print(sarif)
+            return EXIT_FOUND if failed else EXIT_CLEAN
 
     if args.format == "json":
         data = result.scan.to_dict()
@@ -408,16 +417,55 @@ def cmd_repo(args: argparse.Namespace) -> int:
     return EXIT_FOUND if failed else EXIT_CLEAN
 
 
-def _github_output(result, root: Path, strict: bool, md: str) -> None:
-    """Annotations (paths relative to the workspace, which is what GitHub resolves them
-    against), the job summary, and step outputs."""
-    base = Path(os.environ.get("GITHUB_WORKSPACE") or Path.cwd()).resolve()
+def _repo_sarif(result, root: Path, strict: bool) -> str:
+    """SARIF for code scanning. With --strict, committed transcripts are alerts too, so a run that
+    fails on them explains why in the Security tab."""
+    ws = _workspace_relative(root)
+    sarif = render(result.scan, "sarif", uri=ws)
+    if not (strict and result.transcripts):
+        return sarif
+    data = json.loads(sarif)
+    run = data["runs"][0]
+    run["tool"]["driver"]["rules"].append({
+        "id": "committed-transcript",
+        "shortDescription": {"text": "Agent transcript committed"},
+        "fullDescription": {"text": "A coding agent's chat log is tracked by git; anyone who can read the repo "
+                                    "can read the conversation."},
+        "helpUri": "https://github.com/maximilianfeix/spillage#repo",
+        "defaultConfiguration": {"level": "error"},
+        "properties": {"tags": ["security"], "precision": "very-high", "security-severity": "5.0"},
+    })
+    for path, agent in sorted(result.transcripts.items()):
+        uri = ws(root / path)
+        run["results"].append({
+            "ruleId": "committed-transcript",
+            "level": "error",
+            "message": {"text": f"{agent_label(agent)} transcript is committed. Remove it from git and add it "
+                                "to .gitignore."},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": uri}}}],
+            "partialFingerprints": {"spillageTranscript/v1": uri},
+        })
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def _workspace_relative(root: Path):
+    """Paths the way GitHub resolves them: relative to the checkout (GITHUB_WORKSPACE), or to the
+    repository when run outside Actions."""
+    base = Path(os.environ.get("GITHUB_WORKSPACE") or root).resolve()
 
     def ws(path) -> str:
         try:
             return os.path.relpath(Path(path).resolve(), base).replace(os.sep, "/")
-        except ValueError:
+        except ValueError:  # another drive on Windows
             return str(path)
+
+    return ws
+
+
+def _github_output(result, root: Path, strict: bool, md: str) -> None:
+    """Annotations (paths relative to the workspace, which is what GitHub resolves them
+    against), the job summary, and step outputs."""
+    ws = _workspace_relative(Path.cwd())
 
     transcripts = {str((root / r).resolve()) for r in result.transcripts}
     for f in result.findings:

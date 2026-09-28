@@ -173,6 +173,7 @@ The exit code is `1` when something was found and `0` when not, so it drops into
 spillage scan -f html -o report.html   # a page to open in the browser
 spillage scan -f json                  # for scripts: masked values, fingerprints, every location
 spillage scan -f markdown              # for an issue or a PR
+spillage scan -f sarif                 # SARIF 2.1.0 for code scanning tools
 ```
 
 The HTML report is a single file with no CDN or web fonts, so it works offline and doesn't load anything. It shows the severity split, how the secrets got there, a timeline of when they first leaked, and every place each one was seen, with filters and search. Light and dark.
@@ -273,6 +274,25 @@ jobs:
 ```
 
 Each secret becomes an error annotation on the file and line, and the job summary gets a table with rotate links. Outputs: `transcripts` and `secrets` (counts). A test fixture that trips it? Put its fingerprint into a `.spillageignore` file in the repo.
+
+To see them in the **Security tab** and on pull requests too, have it write SARIF and upload that:
+
+```yaml
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maximilianfeix/spillage@v0.6.9
+        with:
+          sarif: spillage.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()   # spillage fails the step when it finds something
+        with:
+          sarif_file: spillage.sarif
+```
+
+Each secret becomes one alert per file, with the masked value, the fingerprint, how it got there and the rotate link. `spillage repo -f sarif` prints the same.
 
 ### pre-commit
 
