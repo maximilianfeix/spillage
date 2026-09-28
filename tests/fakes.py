@@ -115,3 +115,66 @@ def db_url(password: Optional[str] = None) -> str:
 
 def generic_value() -> str:
     return rand(10, string.ascii_lowercase) + rand(6, string.digits) + rand(8, string.ascii_uppercase)
+
+
+HEX = "0123456789abcdef"
+
+
+def claude_oauth() -> str:
+    return "sk-" + "ant-" + "oat01-" + rand(95, ALNUM + "-_") + "AA"
+
+
+def langsmith() -> str:
+    return "lsv2" + "_pt_" + rand(32, HEX) + "_" + rand(10, HEX)
+
+
+def pinecone() -> str:
+    return "pcsk" + "_" + rand(6) + "_" + rand(64)
+
+
+def tavily() -> str:
+    return "tvly" + "-dev-" + rand(32)
+
+
+def firecrawl() -> str:
+    return "fc" + "-" + rand(32, HEX)
+
+
+def supabase_secret() -> str:
+    return "sb_" + "secret_" + rand(22) + "_" + rand(8)
+
+
+def resend() -> str:
+    return "re" + "_" + rand(8) + "_" + rand(24)
+
+
+def posthog() -> str:
+    return "phx" + "_" + rand(43)
+
+
+def vercel_blob() -> str:
+    return "vercel_blob" + "_rw_" + rand(16) + "_" + rand(30)
+
+
+def google_refresh() -> str:
+    return "1//" + "0" + rand(60, ALNUM + "_-")
+
+
+def doppler() -> str:
+    return "dp" + ".pt." + rand(43)
+
+
+def vault() -> str:
+    return "hv" + "s." + rand(95, ALNUM + "_-")
+
+
+def onepassword() -> str:
+    return "ops" + "_eyJ" + rand(300, ALNUM + "+/")
+
+
+def planetscale() -> str:
+    return "pscale" + "_tkn_" + rand(43)
+
+
+def brevo() -> str:
+    return "xkey" + "sib-" + rand(64, HEX) + "-" + rand(16)

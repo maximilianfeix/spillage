@@ -44,6 +44,21 @@ POSITIVES = [
     ("sendgrid-api-key", fakes.sendgrid),
     ("jwt", fakes.jwt),
     ("private-key", fakes.private_key),
+    ("claude-oauth-token", fakes.claude_oauth),
+    ("langsmith-api-key", fakes.langsmith),
+    ("pinecone-api-key", fakes.pinecone),
+    ("tavily-api-key", fakes.tavily),
+    ("firecrawl-api-key", fakes.firecrawl),
+    ("supabase-secret-key", fakes.supabase_secret),
+    ("resend-api-key", fakes.resend),
+    ("posthog-personal-key", fakes.posthog),
+    ("vercel-blob-token", fakes.vercel_blob),
+    ("google-oauth-refresh-token", fakes.google_refresh),
+    ("doppler-token", fakes.doppler),
+    ("vault-token", fakes.vault),
+    ("1password-service-account", fakes.onepassword),
+    ("planetscale-token", fakes.planetscale),
+    ("brevo-api-key", fakes.brevo),
 ]
 
 
@@ -144,6 +159,9 @@ def test_generic_assignments(text):
     "commit 3f2a9c1e5b7d4f8a0c6e2b9d1f3a5c7e9b0d2f4a",
     "id 123e4567-e89b-12d3-a456-426614174000",
     "sk-ant-" + "api03-short",
+    "re_compile_pattern_for_the_parser",
+    "sb_publishable_" + "abcdefghijklmnopqrstuvwxyz0123",
+    "see https://example.com/fc-0000000000000000000000000000000",
 ])
 def test_things_that_are_not_secrets(text):
     assert ids(text) == []

@@ -16,7 +16,7 @@
 <a href="#install"><img src="https://img.shields.io/badge/Install-FF6B4A?style=for-the-badge&labelColor=0E0F13" alt="Install"></a>
 <a href="#scrub"><img src="https://img.shields.io/badge/Scrub-0E0F13?style=for-the-badge" alt="Scrub"></a>
 <a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
-<a href="#what-it-finds"><img src="https://img.shields.io/badge/40_rules-0E0F13?style=for-the-badge" alt="40 rules"></a>
+<a href="#what-it-finds"><img src="https://img.shields.io/badge/56_rules-0E0F13?style=for-the-badge" alt="56 rules"></a>
 
 [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [How it works](#how-it-works) · [FAQ](#faq)
 
@@ -106,14 +106,15 @@ Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, whic
 
 ## What it finds
 
-40 rules. Each one knows the key's exact shape and where to revoke it.
+56 rules. Each one knows the key's exact shape and where to revoke it.
 
 | | |
 | --- | --- |
-| **AI providers** | Anthropic, OpenAI (user, project, service account, admin), OpenRouter, Google AI / Gemini, Hugging Face, Groq, xAI, Perplexity, Replicate |
+| **AI providers** | Anthropic (API, admin, and Claude Code OAuth tokens from `claude setup-token`), OpenAI (user, project, service account, admin), OpenRouter, Google AI / Gemini, Hugging Face, Groq, xAI, Perplexity, Replicate |
+| **AI app stack** | Supabase secret keys, LangSmith, Pinecone, Tavily, Firecrawl, Resend, PostHog, Vercel Blob. Most of these aren't in gitleaks' default rules |
 | **Code and packages** | GitHub (classic, OAuth, app, refresh, fine-grained; checksum-verified), GitLab, npm, PyPI |
-| **Cloud** | AWS access key id and secret key, Google OAuth client secret, DigitalOcean, Databricks |
-| **Payments and SaaS** | Stripe (live is critical, test is low), Slack tokens and webhooks, Discord bot tokens and webhooks, Telegram bots, SendGrid, Twilio, Shopify, Linear, Notion, Sentry, Grafana, Postman, Atlassian, Figma |
+| **Cloud and infra** | AWS access key id and secret key, Google OAuth client secrets and refresh tokens, DigitalOcean, Databricks, Doppler, HashiCorp Vault, 1Password service accounts, PlanetScale |
+| **Payments and SaaS** | Stripe (live is critical, test is low), Slack tokens and webhooks, Discord bot tokens and webhooks, Telegram bots, SendGrid, Brevo, Twilio, Shopify, Linear, Notion, Sentry, Grafana, Postman, Atlassian, Figma |
 | **Everything else** | private keys (RSA, EC, OpenSSH, PGP, …), database URLs with a password in them, JWTs (Supabase `anon` keys count as low), and `API_KEY=…` / `"client_secret": "…"` / `Bearer …` with a high-entropy value |
 
 `spillage rules` lists them with their ids. Leave some out with `--skip-rules jwt,generic-secret`.
@@ -246,7 +247,7 @@ repos:
 ## How it works
 
 ```
- agent logs ──▶ discover ──▶ raw text ──▶ 40 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
+ agent logs ──▶ discover ──▶ raw text ──▶ 56 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
  (10 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with

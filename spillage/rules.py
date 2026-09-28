@@ -299,6 +299,11 @@ _E = r"(?![A-Za-z0-9_\-])"  # right boundary: not followed by more token charact
 BUILTIN_RULES: list = [
     # ---- AI providers -------------------------------------------------------------------
     Rule(
+        "claude-oauth-token", "Claude Code OAuth token", "Anthropic",
+        r"(sk-ant-o(?:at|rt)\d\d-[A-Za-z0-9_\-]{60,160})" + _E,
+        Severity.CRITICAL, ("sk-ant-oat", "sk-ant-ort"), "https://claude.ai/settings/claude-code", group=1,
+    ),
+    Rule(
         "anthropic-api-key", "Anthropic API key", "Anthropic",
         r"(sk-ant-(?:api|admin)\d\d-[A-Za-z0-9_\-]{80,120})" + _E,
         Severity.CRITICAL, ("sk-ant-",), "https://console.anthropic.com/settings/keys", group=1,
@@ -354,6 +359,47 @@ BUILTIN_RULES: list = [
         r"(r8_[A-Za-z0-9]{37})" + _E,
         Severity.HIGH, ("r8_",), "https://replicate.com/account/api-tokens", group=1, min_entropy=3.5,
     ),
+    Rule(
+        "langsmith-api-key", "LangSmith API key", "LangChain",
+        r"(lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10})" + _E,
+        Severity.HIGH, ("lsv2_",), "https://smith.langchain.com/settings", group=1,
+    ),
+    Rule(
+        "pinecone-api-key", "Pinecone API key", "Pinecone",
+        r"(pcsk_[A-Za-z0-9]{5,8}_[A-Za-z0-9]{40,90})" + _E,
+        Severity.HIGH, ("pcsk_",), "https://app.pinecone.io", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "tavily-api-key", "Tavily API key", "Tavily",
+        r"(tvly-(?:dev-|prod-)?[A-Za-z0-9]{32})" + _E,
+        Severity.HIGH, ("tvly-",), "https://app.tavily.com", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "firecrawl-api-key", "Firecrawl API key", "Firecrawl",
+        r"(fc-[a-f0-9]{32})" + _E,
+        Severity.HIGH, ("fc-",), "https://www.firecrawl.dev/app/api-keys", group=1, min_entropy=3.2,
+    ),
+    Rule(
+        "supabase-secret-key", "Supabase secret key", "Supabase",
+        r"(sb_secret_[A-Za-z0-9_\-]{30,48})" + _E,
+        Severity.CRITICAL, ("sb_secret_",), "https://supabase.com/dashboard/project/_/settings/api-keys", group=1,
+        min_entropy=3.5,
+    ),
+    Rule(
+        "resend-api-key", "Resend API key", "Resend",
+        r"(re_[A-Za-z0-9]{8}_[A-Za-z0-9]{24})" + _E,
+        Severity.HIGH, ("re_",), "https://resend.com/api-keys", group=1, min_entropy=3.8,
+    ),
+    Rule(
+        "posthog-personal-key", "PostHog personal API key", "PostHog",
+        r"(phx_[A-Za-z0-9]{40,50})" + _E,
+        Severity.HIGH, ("phx_",), "https://app.posthog.com/settings/user-api-keys", group=1, min_entropy=3.8,
+    ),
+    Rule(
+        "vercel-blob-token", "Vercel Blob token", "Vercel",
+        r"(vercel_blob_rw_[A-Za-z0-9]{16}_[A-Za-z0-9]{30})" + _E,
+        Severity.HIGH, ("vercel_blob_rw_",), "https://vercel.com/dashboard/stores", group=1,
+    ),
     # ---- Code hosting and package registries ---------------------------------------------
     Rule(
         "github-token", "GitHub token", "GitHub",
@@ -407,6 +453,36 @@ BUILTIN_RULES: list = [
         r"(dapi[a-f0-9]{32}(?:-\d)?)" + _E,
         Severity.HIGH, ("dapi",), "", group=1, min_entropy=3.0,
     ),
+    Rule(
+        "google-oauth-refresh-token", "Google OAuth refresh token", "Google",
+        r"(1//0[A-Za-z0-9_\-]{40,120})" + _E,
+        Severity.HIGH, ("1//0",), "https://myaccount.google.com/permissions", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "google-oauth-access-token", "Google OAuth access token", "Google",
+        r"(ya29\.[A-Za-z0-9_\-]{50,})" + _E,
+        Severity.LOW, ("ya29.",), "", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "doppler-token", "Doppler token", "Doppler",
+        r"(dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,44})" + _E,
+        Severity.CRITICAL, ("dp.",), "https://dashboard.doppler.com", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "vault-token", "HashiCorp Vault token", "HashiCorp",
+        r"(hv[sb]\.[A-Za-z0-9_\-]{90,300})" + _E,
+        Severity.CRITICAL, ("hvs.", "hvb."), "", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "1password-service-account", "1Password service account token", "1Password",
+        r"(ops_eyJ[A-Za-z0-9+/]{250,}={0,3})",
+        Severity.CRITICAL, ("ops_eyJ",), "https://my.1password.com/developer-tools", group=1,
+    ),
+    Rule(
+        "planetscale-token", "PlanetScale token or password", "PlanetScale",
+        r"(pscale_(?:tkn|pw|oauth)_[A-Za-z0-9_=.\-]{32,64})" + _E,
+        Severity.HIGH, ("pscale_",), "https://app.planetscale.com", group=1, min_entropy=3.8,
+    ),
     # ---- Payments and SaaS ---------------------------------------------------------------
     StripeRule(
         "stripe-secret-key", "Stripe secret key", "Stripe",
@@ -455,6 +531,11 @@ BUILTIN_RULES: list = [
         "shopify-token", "Shopify access token", "Shopify",
         r"(shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32})" + _E,
         Severity.HIGH, ("shpat_", "shpca_", "shppa_", "shpss_"), "", group=1,
+    ),
+    Rule(
+        "brevo-api-key", "Brevo API key", "Brevo",
+        r"(xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16})" + _E,
+        Severity.HIGH, ("xkeysib-",), "https://app.brevo.com/settings/keys/api", group=1,
     ),
     Rule(
         "linear-api-key", "Linear API key", "Linear",
