@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spillage</title>
+<meta name="description" content="Your coding agent wrote your API keys into its logs. spillage finds them in Claude Code, Codex, Cursor, Gemini CLI and more, scrubs them, and blocks the next one.">
+<meta property="og:title" content="spillage: find the keys your coding agents spilled">
+<meta property="og:description" content="Scan Claude Code, Codex, Cursor and Gemini CLI logs for leaked API keys. Scrub them. Block the next one.">
+<meta property="og:image" content="https://maximilianfeix.github.io/spillage/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 6c9 13 18 23 18 34a18 18 0 0 1-36 0C14 29 23 19 32 6z' fill='%23FF6B4A'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0E1016; --ink-2: #151822; --line: #232733; --paper: #E8E4DA; --muted: #858A99;
+  --spill: #FF6B4A; --spill-wash: rgba(255,107,74,.16); --ok: #5FD3A0;
+  --display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root { --ink: #F6F3EC; --ink-2: #ECE7DC; --line: #DAD3C5; --paper: #15171E; --muted: #6A6F7C;
+          --spill: #E4472A; --spill-wash: rgba(228,71,42,.13); --ok: #13895A; }
+}
+* { box-sizing: border-box; }
+html { background: var(--ink); color: var(--paper); }
+body { margin: 0; font: 17px/1.6 var(--display); font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration-color: var(--spill); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--spill); outline-offset: 3px; border-radius: 4px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+/* ---- top ---- */
+nav { display: flex; align-items: center; gap: 22px; padding: 26px 0; font-size: 15px; }
+nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; text-decoration: none; margin-right: auto; }
+nav a:not(.brand) { color: var(--muted); text-decoration: none; }
+nav a:not(.brand):hover { color: var(--paper); }
+
+/* ---- hero ---- */
+.hero { padding: 64px 0 40px; }
+h1 { font-weight: 800; font-size: clamp(44px, 8.4vw, 112px); line-height: .92; letter-spacing: -.045em; margin: 0; max-width: 11.5ch; font-variation-settings: "opsz" 96; }
+.lede { max-width: 58ch; font-size: 20px; color: var(--muted); margin: 30px 0 0; }
+.lede b { color: var(--paper); font-weight: 600; }
+
+/* the log tape: the one moment on this page */
+.tape { margin: 56px 0 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 18px 0; font: 13.5px/2 var(--mono); color: var(--muted); overflow: hidden; position: relative; }
+.tape .row { white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.tape .row b { font-weight: 400; color: var(--paper); }
+.tape .hit { position: relative; color: var(--spill); font-weight: 600; }
+.tape .hit::after { content: attr(data-mark); position: absolute; inset: -2px -6px; background: var(--spill); color: var(--ink); font-weight: 600; padding: 0 6px; clip-path: inset(0 100% 0 0); animation: redact .7s cubic-bezier(.7,0,.2,1) 2.4s forwards; white-space: nowrap; border-radius: 3px; }
+.tape .row { opacity: 0; transform: translateX(-12px); animation: row .5s cubic-bezier(.2,.8,.2,1) forwards; }
+.tape .row:nth-child(1) { animation-delay: .1s } .tape .row:nth-child(2) { animation-delay: .25s }
+.tape .row:nth-child(3) { animation-delay: .4s } .tape .row:nth-child(4) { animation-delay: .55s }
+.tape .row:nth-child(5) { animation-delay: .7s } .tape .row:nth-child(6) { animation-delay: .85s }
+.tape .note { position: absolute; right: 0; bottom: 18px; font: 13px var(--mono); color: var(--ok); opacity: 0; animation: note .4s ease 3.2s forwards; background: var(--ink); padding-left: 12px; }
+@keyframes row { to { opacity: 1; transform: none; } }
+@keyframes redact { to { clip-path: inset(0 0 0 0); } }
+@keyframes note { to { opacity: 1; } }
+
+.install { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; margin: 40px 0 0; }
+.cmd { display: inline-flex; align-items: center; gap: 14px; font: 15px var(--mono); background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 12px 18px; max-width: 100%; }
+.cmd code { overflow-x: auto; white-space: nowrap; min-width: 0; }
+.install > * { min-width: 0; }
+.cmd code::before { content: "$ "; color: var(--muted); }
+.cmd button { font: 600 13px var(--display); background: var(--paper); color: var(--ink); border: 0; border-radius: 7px; padding: 7px 12px; cursor: pointer; }
+.install .alt { color: var(--muted); font-size: 15px; }
+
+/* ---- sections ---- */
+section { padding: 88px 0 0; }
+h2 { font-weight: 800; font-size: clamp(30px, 4.2vw, 48px); letter-spacing: -.03em; line-height: 1.02; margin: 0 0 18px; max-width: 20ch; }
+.intro { color: var(--muted); max-width: 60ch; margin: 0 0 40px; }
+
+.flow { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); }
+.flow div { padding: 22px 22px 6px 0; border-right: 1px solid var(--line); margin-right: 22px; }
+.flow div:last-child { border-right: 0; margin-right: 0; }
+.flow h3 { font: 600 15px var(--mono); margin: 0 0 10px; color: var(--spill); }
+.flow p { margin: 0; font-size: 16px; color: var(--muted); }
+.flow p b { color: var(--paper); font-weight: 600; }
+
+.agents { font-size: clamp(22px, 3vw, 34px); font-weight: 600; letter-spacing: -.02em; line-height: 1.35; max-width: 30ch; }
+.agents span { color: var(--muted); font-weight: 400; }
+
+.public { display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: start; }
+.public .figure { font-weight: 800; font-size: clamp(64px, 11vw, 150px); line-height: .85; letter-spacing: -.05em; color: var(--spill); }
+.public p { margin: 0 0 14px; }
+.public .src { font-size: 14px; color: var(--muted); }
+
+.demo { margin-top: 8px; }
+.demo img { display: block; width: 100%; max-width: 860px; height: auto; border-radius: 14px; }
+
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 40px; }
+.facts p { margin: 0 0 26px; color: var(--muted); font-size: 16px; }
+.facts p b { display: block; color: var(--paper); font-weight: 600; font-size: 18px; margin-bottom: 4px; }
+
+footer { margin: 110px 0 0; padding: 30px 0 50px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 10px 28px; }
+footer a { color: var(--paper); }
+
+@media (max-width: 860px) {
+  .flow, .facts, .public { grid-template-columns: 1fr; }
+  .flow div { border-right: 0; margin-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 18px; }
+  nav a.hide { display: none; }
+  .tape .note { position: static; display: block; padding: 6px 0 0; }
+  .tape .row { white-space: normal; word-break: break-all; line-height: 1.7; margin-bottom: 6px; }
+  .tape .row:nth-child(1), .tape .row:nth-child(5), .tape .row:nth-child(6) { display: none; }
+  .tape .hit::after { white-space: normal; }
+  .cmd { width: 100%; }
+  html, body { overflow-x: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tape .row, .tape .note { animation: none; opacity: 1; transform: none; }
+  .tape .hit::after { animation: none; clip-path: inset(0 0 0 0); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="./"><svg width="22" height="22" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 6c9 13 18 23 18 34a18 18 0 0 1-36 0C14 29 23 19 32 6z" fill="var(--spill)"/></svg>spillage</a>
+    <a class="hide" href="#how">How it works</a>
+    <a class="hide" href="#public">Repos</a>
+    <a href="https://github.com/maximilianfeix/spillage">GitHub</a>
+  </nav>
+
+  <header class="hero">
+    <h1>Your agent wrote your API key down.</h1>
+    <p class="lede">Claude Code, Codex, Cursor and every other coding agent keep a plain-text log of each session. <b>Every key you pasted and every <code>.env</code> the agent read is in there.</b> spillage finds them, tells you how they got there, cleans them out and stops the next one.</p>
+
+    <div class="tape" aria-label="A session log in which a GitHub token appears and gets redacted">
+      <div class="row">{"type":"user","cwd":"/Users/you/code/shop","message":{"content":"<b>the deploy fails with 401, can you look?</b>"}}</div>
+      <div class="row">{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"<b>cat .env</b>"}}]}}</div>
+      <div class="row">{"type":"user","message":{"content":[{"type":"tool_result","content":"PORT=3000\nGITHUB_TOKEN=<span class="hit" data-mark="[REDACTED:github-token:dfd5fe8c9655]">ghp_N7ITxKLUkX0vyOYx6tzSnWQ36xgB0O4awzF9</span>\nDEBUG=1"}]}}</div>
+      <div class="row">{"type":"assistant","message":{"content":"<b>Found it. The token in .env has expired.</b>"}}</div>
+      <div class="row">{"type":"user","message":{"content":"<b>ok here's a fresh one, push it</b>"}}</div>
+      <div class="row">{"type":"summary","leafUuid":"8f2c41d0-6a1e-4c55-9d0e-5b7e2a91c3f4"}</div>
+      <div class="note">✓ found, rotated, scrubbed</div>
+    </div>
+
+    <div class="install">
+      <div class="cmd"><code id="install">pipx install git+https://github.com/maximilianfeix/spillage</code><button type="button" id="copy">Copy</button></div>
+      <span class="alt">then run <code>spillage</code>. No dependencies, no network.</span>
+    </div>
+  </header>
+
+  <section id="how">
+    <h2>Find it, clean it, stop the next one.</h2>
+    <p class="intro">Everything runs on your machine. Keys are only ever shown as a masked prefix and a fingerprint.</p>
+    <div class="flow">
+      <div><h3>spillage</h3><p><b>Finds the keys</b> in every agent's logs and says whether you pasted them, a tool printed them or the model repeated them, with a link to rotate each one.</p></div>
+      <div><h3>spillage scrub</h3><p><b>Redacts them in place</b> without breaking the JSON your agent reads back when you resume a session.</p></div>
+      <div><h3>spillage guard install</h3><p><b>Blocks the next leak</b> with hooks in Claude Code, Codex and Gemini CLI: prompts with keys, reading <code>.env</code>, <code>printenv</code>.</p></div>
+      <div><h3>spillage watch</h3><p><b>Notifies you within seconds</b> when a key lands in any agent's log, Cursor and Aider included.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Reads the logs of</h2>
+    <p class="agents">Claude Code, Codex CLI, Cursor, Gemini CLI, Cline, Roo, Kilo, OpenCode, Aider, SpecStory, Continue and Copilot CLI. <span>Plus any folder you point it at.</span></p>
+  </section>
+
+  <section id="public">
+    <div class="public">
+      <div class="figure">16,000</div>
+      <div>
+        <h2>chat logs sit in public GitHub repos.</h2>
+        <p>SpecStory and Aider save conversations inside the project, and from there they get committed. <code>spillage repo</code> finds them and the keys inside, and ships as a GitHub Action and a pre-commit hook.</p>
+        <p class="src">GitHub code search, September 2026: about 16,000 <a href="https://github.com/search?q=path%3A.specstory%2Fhistory&type=code">SpecStory histories</a> and 5,000 <a href="https://github.com/search?q=path%3A.aider.chat.history.md&type=code">Aider histories</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What a run looks like</h2>
+    <div class="demo"><img src="demo.svg" alt="Animated terminal: spillage finds a GitHub token, a Stripe key and an Anthropic key, scrubs them and installs the guard hooks" width="860" height="692"></div>
+  </section>
+
+  <section>
+    <h2>Built to be trusted with your keys</h2>
+    <div class="facts">
+      <p><b>No dependencies</b>Standard-library Python 3.9 and up. Nothing to audit but the code.</p>
+      <p><b>No network</b>No telemetry, no update check, no key validation calls.</p>
+      <p><b>Few false alarms</b>Checksums for GitHub tokens, decodable JWTs, placeholder filtering.</p>
+      <p><b>56 rules</b>Including the AI stack gitleaks doesn't cover: Claude Code OAuth, Supabase, LangSmith, Pinecone.</p>
+      <p><b>Fast</b>About 240 MB of real agent history in under 4 seconds on a laptop.</p>
+      <p><b>MIT licensed</b>Issues and new rules welcome.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>spillage, MIT</span>
+    <a href="https://github.com/maximilianfeix/spillage">Source</a>
+    <a href="https://github.com/maximilianfeix/spillage/releases">Releases</a>
+    <a href="https://github.com/maximilianfeix/spillage/issues/new/choose">Report a missed key</a>
+  </footer>
+</div>
+<script>
+  const btn = document.getElementById("copy");
+  btn.addEventListener("click", () => {
+    const text = document.getElementById("install").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = "Copied";
+      setTimeout(() => (btn.textContent = "Copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>
