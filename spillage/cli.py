@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__, guard
+from . import html as _html  # noqa: F401  (registers the html format)
 from .models import Severity
 from .reporters import agent_label, formats, render
 from .rules import get_rules

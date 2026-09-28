@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>spillage report</title>
+<style>
+:root {
+  --bg: #0e0f13; --panel: #16181f; --panel-2: #1c1f28; --line: #262a35; --text: #e9e7e2; --muted: #8b8f9c;
+  --accent: #ff6b4a; --accent-soft: rgba(255,107,74,.14);
+  --critical: #ff4d5e; --high: #d86bff; --medium: #ffc24a; --low: #5aa9ff; --ok: #3ddc97;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f7f5f1; --panel: #ffffff; --panel-2: #f1eee8; --line: #e4e0d8; --text: #16171c; --muted: #6b6f7a;
+          --accent-soft: rgba(255,107,74,.12); --accent: #e8502e;
+          --critical: #d92d3f; --high: #9b3fd1; --medium: #b07400; --low: #2a6fd6; --ok: #139e62; }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { margin: 0; font: 15px/1.55 var(--sans); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 40px 20px 80px; }
+header { display: flex; align-items: center; gap: 14px; margin-bottom: 36px; }
+header svg { flex: none; }
+header h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
+header .meta { color: var(--muted); font-size: 13px; }
+header .spacer { flex: 1; }
+.hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; margin-bottom: 20px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+.big { font-size: 64px; font-weight: 700; letter-spacing: -.04em; line-height: 1; }
+.big small { font-size: 18px; font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 6px; }
+.bar { display: flex; height: 10px; border-radius: 99px; overflow: hidden; background: var(--panel-2); margin: 22px 0 12px; }
+.bar span { height: 100%; width: 0; transition: width 1.1s cubic-bezier(.2,.8,.2,1); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend b { color: var(--text); font-weight: 600; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+.origins div { display: grid; grid-template-columns: 150px 1fr 28px; align-items: center; gap: 10px; font-size: 13px; margin: 9px 0; }
+.origins i { display: block; height: 8px; border-radius: 99px; background: var(--accent); width: 0; transition: width 1s cubic-bezier(.2,.8,.2,1) .2s; }
+.origins em { font-style: normal; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.timeline { margin-bottom: 20px; }
+.timeline svg { width: 100%; height: 110px; display: block; overflow: visible; }
+.timeline text { fill: var(--muted); font: 11px var(--sans); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 34px 0 14px; }
+.chip { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 99px; padding: 6px 13px; font: 13px var(--sans); cursor: pointer; transition: all .15s; }
+.chip:hover { border-color: var(--muted); }
+.chip[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.search { flex: 1; min-width: 180px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 99px; padding: 7px 15px; font: 13px var(--sans); outline: none; }
+.search:focus { border-color: var(--accent); }
+.finding { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; margin-bottom: 12px; opacity: 0; transform: translateY(8px); animation: rise .5s cubic-bezier(.2,.8,.2,1) forwards; position: relative; overflow: hidden; }
+.finding::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--sev); }
+@keyframes rise { to { opacity: 1; transform: none; } }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.sev { font: 600 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); }
+.name { font-weight: 650; }
+.masked { font: 13px var(--mono); background: var(--panel-2); padding: 2px 8px; border-radius: 6px; }
+.fp { font: 12px var(--mono); color: var(--muted); margin-left: auto; cursor: pointer; border: 0; background: none; padding: 0; }
+.fp:hover { color: var(--text); }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+.facts b { color: var(--text); font-weight: 500; }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--muted); font-size: 13px; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "▸ "; }
+details[open] summary::before { content: "▾ "; }
+.locs { margin: 8px 0 0; padding: 0; list-style: none; font: 12px/1.7 var(--mono); color: var(--muted); max-height: 240px; overflow: auto; }
+.locs span { color: var(--text); }
+.rotate { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.rotate:hover { text-decoration: underline; }
+.empty { text-align: center; padding: 70px 20px; }
+.empty .big { color: var(--ok); }
+.steps { margin-top: 34px; }
+.steps ol { margin: 0; padding-left: 20px; }
+.steps li { margin: 8px 0; }
+code { font: 13px var(--mono); background: var(--panel-2); padding: 2px 6px; border-radius: 6px; }
+footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: center; }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 99px; font-size: 13px; opacity: 0; transition: all .25s; pointer-events: none; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+@media (max-width: 760px) { .hero { grid-template-columns: 1fr; } .big { font-size: 52px; } .origins div { grid-template-columns: 120px 1fr 24px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } .finding { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 6c9 13 18 23 18 34a18 18 0 0 1-36 0C14 29 23 19 32 6z" fill="#ff6b4a"/><path d="M24 42a8 8 0 0 0 8 8" stroke="#fff" stroke-opacity=".55" stroke-width="4" fill="none" stroke-linecap="round"/></svg>
+    <div><h1>spillage report</h1><div class="meta" id="meta"></div></div>
+    <div class="spacer"></div>
+  </header>
+  <main id="app"></main>
+  <footer>Generated by spillage __VERSION__. Values are masked; the full secrets never leave the log files.</footer>
+</div>
+<div class="toast" id="toast"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const SEV = ["critical", "high", "medium", "low"];
+  const ORIGIN = {"prompt": "Pasted in a prompt", "tool-output": "Printed by a tool", "assistant": "Repeated by the model",
+                  "file-snapshot": "File backups", "history": "Prompt history", "other": "Session metadata"};
+  const app = document.getElementById("app");
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue("--" + name).trim();
+  const toast = (msg) => { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(() => t.classList.remove("on"), 1400); };
+  const copy = (text, msg) => { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast(msg), () => toast(text)); };
+
+  document.getElementById("meta").textContent =
+    `${D.generated} · ${D.summary.files} files (${D.size}) from ${D.agents.join(", ") || "nothing"} · ${D.summary.seconds}s`;
+
+  const F = D.findings;
+  if (!F.length) {
+    const e = el("div", "card empty");
+    e.append(el("div", "big", "0"), el("p", null, D.summary.files ? "Nothing spilled. No secrets in your agent logs." : "No agent logs found."));
+    app.append(e);
+    return;
+  }
+
+  // ---- hero ------------------------------------------------------------------------------
+  const hero = el("section", "hero");
+  const left = el("div", "card");
+  const big = el("div", "big", String(F.length));
+  const noun = el("small", null, F.length === 1 ? "secret spilled" : "secrets spilled");
+  big.append(noun);
+  left.append(big);
+  const bar = el("div", "bar"), legend = el("div", "legend");
+  SEV.forEach(s => {
+    const n = D.summary[s]; const span = el("span"); span.style.background = css(s); span.dataset.w = (n / F.length * 100) + "%"; bar.append(span);
+    const item = el("span"); const dot = el("i", "dot"); dot.style.background = css(s); const b = el("b", null, String(n));
+    item.append(dot, b, " " + s); legend.append(item);
+  });
+  left.append(bar, legend);
+  const right = el("div", "card origins");
+  right.append(el("h2", null, "How they got there"));
+  const counts = {};
+  F.forEach(f => f.origins.forEach(o => counts[o] = (counts[o] || 0) + 1));
+  const maxO = Math.max(1, ...Object.values(counts));
+  Object.keys(ORIGIN).filter(o => counts[o]).forEach(o => {
+    const row = el("div"); const track = el("div"); const fill = el("i"); fill.dataset.w = (counts[o] / maxO * 100) + "%";
+    track.append(fill); row.append(el("span", null, ORIGIN[o]), track, el("em", null, String(counts[o]))); right.append(row);
+  });
+  hero.append(left, right);
+  app.append(hero);
+
+  // ---- timeline ---------------------------------------------------------------------------
+  const dated = F.filter(f => f.first_seen);
+  if (dated.length) {
+    const card = el("section", "card timeline"); card.append(el("h2", null, "When they leaked"));
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg"); svg.setAttribute("viewBox", "0 0 1000 110"); svg.setAttribute("preserveAspectRatio", "none");
+    const t = dated.map(f => Date.parse(f.first_seen)); let lo = Math.min(...t), hi = Math.max(...t);
+    if (hi - lo < 86400000) { lo -= 43200000; hi += 43200000; }
+    const x = v => 20 + (v - lo) / (hi - lo) * 960;
+    const axis = document.createElementNS(ns, "line"); axis.setAttribute("x1", 20); axis.setAttribute("x2", 980); axis.setAttribute("y1", 70); axis.setAttribute("y2", 70);
+    axis.setAttribute("stroke", css("line")); axis.setAttribute("stroke-width", 2); svg.append(axis);
+    [lo, (lo + hi) / 2, hi].forEach((v, i) => {
+      const tx = document.createElementNS(ns, "text"); tx.setAttribute("x", x(v)); tx.setAttribute("y", 100);
+      tx.setAttribute("text-anchor", ["start", "middle", "end"][i]); tx.textContent = new Date(v).toISOString().slice(0, 10); svg.append(tx);
+    });
+    dated.forEach((f, i) => {
+      const c = document.createElementNS(ns, "circle"); const r = 5 + Math.min(9, Math.sqrt(f.occurrences) * 2);
+      c.setAttribute("cx", x(Date.parse(f.first_seen))); c.setAttribute("cy", 70 - (i % 3) * 16); c.setAttribute("r", 0);
+      c.setAttribute("fill", css(f.severity)); c.setAttribute("fill-opacity", ".85");
+      const title = document.createElementNS(ns, "title"); title.textContent = `${f.name} · ${f.masked} · ${f.first_seen.slice(0, 10)}`; c.append(title);
+      svg.append(c);
+      setTimeout(() => { c.style.transition = "r .6s cubic-bezier(.2,.8,.2,1)"; c.setAttribute("r", r); }, 300 + i * 60);
+    });
+    card.append(svg); app.append(card);
+  }
+
+  // ---- filters ----------------------------------------------------------------------------
+  const controls = el("div", "controls");
+  const state = { sev: null, agent: null, q: "" };
+  const chips = [];
+  const chip = (label, key, value) => {
+    const c = el("button", "chip", label); c.setAttribute("aria-pressed", "false");
+    c.onclick = () => { state[key] = state[key] === value ? null : value; chips.forEach(o => o.b.setAttribute("aria-pressed", String(state[o.k] === o.v))); render(); };
+    chips.push({ b: c, k: key, v: value }); return c;
+  };
+  SEV.filter(s => D.summary[s]).forEach(s => controls.append(chip(s, "sev", s)));
+  const agents = [...new Set(F.flatMap(f => f.agents))];
+  if (agents.length > 1) agents.forEach(a => controls.append(chip(D.labels[a] || a, "agent", a)));
+  const search = el("input", "search"); search.placeholder = "Filter by name, file, project…"; search.oninput = () => { state.q = search.value.toLowerCase(); render(); };
+  controls.append(search);
+  app.append(controls);
+  const list = el("section"); app.append(list);
+
+  const card = (f, i) => {
+    const c = el("article", "finding"); c.style.setProperty("--sev", css(f.severity)); c.style.animationDelay = (i * 45) + "ms";
+    const top = el("div", "top");
+    const fp = el("button", "fp", f.fingerprint); fp.title = "Copy the ignore command"; fp.onclick = () => copy(`spillage ignore ${f.fingerprint}`, "Ignore command copied");
+    top.append(el("span", "sev", f.severity), el("span", "name", f.name), el("code", "masked", f.masked), fp);
+    const facts = el("div", "facts");
+    const fact = (k, v) => { const s = el("span", null, k + " "); s.append(el("b", null, v)); facts.append(s); };
+    fact("seen", `${f.occurrences}×`); fact("sessions", String(f.sessions)); fact("agents", f.agents.map(a => D.labels[a] || a).join(", "));
+    if (f.first_seen) fact("first", f.first_seen.slice(0, 10));
+    fact("how", f.origins.map(o => (ORIGIN[o] || o).toLowerCase()).join(", "));
+    c.append(top, facts);
+    const det = el("details"); det.append(el("summary", null, `${f.locations.length} location${f.locations.length === 1 ? "" : "s"}`));
+    const ul = el("ul", "locs");
+    f.locations.forEach(l => { const li = el("li"); li.append(el("span", null, l.file + (l.line ? ":" + l.line : "")), `  ${l.origin}${l.project ? " · " + l.project : ""}`); ul.append(li); });
+    det.append(ul); c.append(det);
+    if (f.rotate_url && /^https:\/\//.test(f.rotate_url)) {
+      const a = el("a", "rotate", `Rotate at ${new URL(f.rotate_url).host} →`); a.href = f.rotate_url; a.target = "_blank"; a.rel = "noopener noreferrer"; c.append(a);
+    }
+    return c;
+  };
+  const render = () => {
+    list.replaceChildren();
+    const hay = f => [f.name, f.provider, f.masked, f.fingerprint, ...f.locations.map(l => l.file + " " + l.project)].join(" ").toLowerCase();
+    F.filter(f => (!state.sev || f.severity === state.sev) && (!state.agent || f.agents.includes(state.agent)) && (!state.q || hay(f).includes(state.q)))
+     .forEach((f, i) => list.append(card(f, i)));
+    if (!list.children.length) list.append(el("p", "legend", "Nothing matches."));
+  };
+  render();
+
+  const steps = el("section", "card steps"); steps.append(el("h2", null, "What now"));
+  const ol = el("ol");
+  const li1 = el("li"); li1.append(el("b", null, "Rotate the keys above. "), "They reached the model provider when the conversation happened; deleting the logs doesn't undo that.");
+  const li2 = el("li"); li2.append("Run ", el("code", null, "spillage scrub"), " to remove them from the files on disk.");
+  const li3 = el("li"); li3.append("Run ", el("code", null, "spillage guard install"), " so the next one gets blocked before it's sent.");
+  ol.append(li1, li2, li3);
+  steps.append(ol); app.append(steps);
+
+  // ---- motion ---------------------------------------------------------------------------
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelectorAll("[data-w]").forEach(e => e.style.width = e.dataset.w);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const start = performance.now(), total = F.length, dur = 900;
+    const tick = now => { const k = Math.max(0, Math.min(1, (now - start) / dur)); big.firstChild.textContent = String(Math.round(total * (1 - Math.pow(1 - k, 3)))); if (k < 1) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  }));
+})();
+</script>
+</body>
+</html>
