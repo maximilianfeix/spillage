@@ -35,7 +35,7 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 - **Zero dependencies, zero network.** Standard library only. Nothing leaves your machine, ever. Secrets are only ever shown masked.
 - **Knows the formats.** Tells a pasted prompt from tool output from a model answer, per agent. Finds keys inside JSON-escaped text, like a private key a tool printed with `\n` in it.
 - **Few false alarms.** GitHub tokens are checked against their built-in CRC32, JWTs have to decode, Discord tokens have to hold a real user id, placeholders like `sk-...your-key-here` are skipped.
-- **Fast.** Rules run over the raw files with literal-prefix regexes on all cores. About 230 MB of real Claude Code history in 9 seconds on a laptop.
+- **Fast.** Rules run over the raw files with literal-prefix regexes on all cores. About 240 MB of real agent history in under 4 seconds on a laptop.
 - **Fixes it, too.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`. `guard` blocks the next leak in Claude Code, Codex and Gemini CLI.
 
 <details>
@@ -208,7 +208,7 @@ The config goes where each agent expects it: `~/.claude/settings.json`, `~/.code
 ```
 
 1. **Discover.** Each agent has a small adapter that knows where its files live and how its records say who's talking.
-2. **Scan the raw text.** The rules run over each file as it is on disk, not over parsed JSON. Almost every rule starts with a literal (`ghp_`, `sk-ant-`, `AKIA`), which lets Python's regex engine jump straight to candidates instead of trying every position: 0.2 s instead of 6 s per rule on a few hundred MB. Patterns without a literal prefix (database URLs, `API_KEY=` assignments, Discord tokens) look up an anchor with `str.find` first and only run the regex there. Big scans fan out over up to 8 processes.
+2. **Scan the raw text.** The rules run over each file as it is on disk, not over parsed JSON. Almost every rule starts with a literal (`ghp_`, `sk-ant-`, `AKIA`), which lets Python's regex engine jump straight to candidates instead of trying every position: 0.2 s instead of 6 s per rule on a few hundred MB. Patterns without a literal prefix (database URLs, `API_KEY=` assignments, Discord tokens) look up an anchor with `str.find` first and only run the regex there. Big scans fan out over up to 8 processes, and huge session files are cut into parts at line breaks so one 100 MB session doesn't keep a single core busy while the others wait.
 3. **Validate.** GitHub tokens carry a CRC32 of themselves and have to match it. JWTs have to decode to JSON with an `alg`. Discord bot tokens have to start with a real user id. Generic secrets need a key-ish name, enough entropy, mixed character classes and no placeholder words.
 4. **Locate.** Only the JSON line that holds a match gets parsed, to find out which session and project it belongs to and whether it came from a prompt, a tool result or the model. A match that only exists inside a base64 image or a thinking signature is dropped as noise.
 5. **Dedupe.** One finding per distinct secret, with every place it was seen, across agents and sessions.
@@ -288,7 +288,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 
 - [ ] [CI on all three operating systems](https://github.com/maximilianfeix/spillage/issues/1)
 - [x] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7)
-- [ ] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
+- [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
 - [ ] PyPI release
 
 <a id="contributing"></a>

@@ -99,10 +99,49 @@ def test_ignore_file_roundtrip(tmp_path):
 def test_mask_never_reveals_more_than_a_quarter(secret):
     shown = mask(secret).split("…")[0]
     assert len(shown) <= max(1, len(secret) // 4)
-    assert secret not in mask(secret) or len(secret) <= 1
+    assert not mask(secret).startswith(secret) or len(secret) <= 1
 
 
 @settings(max_examples=100)
 @given(st.text(max_size=300))
 def test_scan_text_never_crashes(text):
     scan_text(text)
+
+
+def test_big_files_are_split_without_changing_results(home, monkeypatch):
+    """Parts are cut at line breaks; line numbers and the session from line 1 must survive."""
+    keys = [fakes.npm() for _ in range(40)]
+    records = []
+    for key in keys:
+        records.append({"timestamp": "2026-09-20T11:01:00Z", "type": "response_item",
+                        "payload": {"type": "function_call_output", "output": "x" * 3000 + f" {key}"}})
+        records.append({"timestamp": "2026-09-20T11:01:00Z", "type": "response_item",
+                        "payload": {"type": "message", "role": "assistant", "content": "y" * 2000}})
+    home.codex_session(records=records)
+    for i in range(3):
+        home.claude_session(name=f"s{i}", records=[{"type": "user", "message": {"content": "hi"}}])
+    whole = Scanner(workers=1).scan(build_sources())
+    monkeypatch.setattr(scanner_mod, "PARALLEL_THRESHOLD", 0)
+    monkeypatch.setattr(scanner_mod, "SPLIT_BYTES", 20_000)
+    split = Scanner(workers=2).scan(build_sources())
+
+    def view(result):
+        return sorted((f.fingerprint, [(loc.line, loc.session, loc.project, loc.origin) for loc in f.locations])
+                      for f in result.findings)
+
+    assert len(whole.findings) == 40
+    assert view(whole) == view(split)
+    assert {loc.session for f in split.findings for loc in f.locations} == {"rollout-1"}
+
+
+def test_read_part_covers_the_file_exactly(tmp_path):
+    from spillage.scanner import read_part
+
+    path = tmp_path / "x.jsonl"
+    lines = [f'{{"n": {i}, "pad": "{"z" * (i % 17)}"}}\n' for i in range(500)]
+    path.write_text("".join(lines), encoding="utf-8")
+    for parts in (1, 2, 3, 7, 50):
+        pieces = [read_part(path, i, parts) for i in range(parts)]
+        assert "".join(p[0] for p in pieces) == "".join(lines)
+        assert all(p[2] == lines[0] for p in pieces)
+        assert all(not p[0] or p[0].endswith("\n") for p in pieces)

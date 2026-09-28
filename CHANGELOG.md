@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Big session files are cut into parts at line breaks and scanned on several cores, and jobs run biggest first. 244 MB of real logs with a 109 MB session in it: 9.4 s → 3.4 s
+
 ### Added
 - Cursor: chats are read from its SQLite databases (read-only, no lock). Cursor's own login and per-chat encryption keys are skipped
 - `spillage guard` now also covers Codex CLI (`~/.codex/hooks.json`) and Gemini CLI (`~/.gemini/settings.json`). `install` sets up every agent it finds, `--agent` picks. Tool names from all three agents are understood (`read_file`, `run_shell_command`, argv-style `["bash", "-lc", ...]`, ...)

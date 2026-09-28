@@ -17,10 +17,12 @@ from .models import Finding, Location, Severity, fingerprint
 from .rules import Match, Rule, get_rules
 from .sources import Source
 
-ProgressFn = Callable[[int, int, str], None]  # files done, files total, current agent
+ProgressFn = Callable[[int, int, str], None]  # jobs done, jobs total, current agent
 
 # Below this many bytes a process pool costs more than it saves.
 PARALLEL_THRESHOLD = 24 * 1024 * 1024
+# JSONL files bigger than this are cut into parts (at line breaks) that run on different cores.
+SPLIT_BYTES = 8 * 1024 * 1024
 
 
 @dataclass
@@ -85,11 +87,54 @@ def find_in_text(text: str, rules: Sequence[Rule]) -> List[Tuple[Rule, Match]]:
 Hit = Tuple[str, str, Location]
 
 
-def scan_file(source: Source, path: Path, rules: Sequence[Rule]) -> List[Hit]:
-    text = source.load(path)
-    if not text:
-        return []
-    doc = source.document(path, text)
+def read_part(path: Path, part: int, parts: int) -> Tuple[str, int, str]:
+    """(text of this part, byte offset where it starts, the file's first line).
+
+    Only this part's bytes are read. Cuts land on line breaks, so no JSON line is split."""
+    size = path.stat().st_size
+    with open(path, "rb") as fh:
+        first = fh.readline()
+
+        def cut(pos: int) -> int:
+            if pos <= 0:
+                return 0
+            if pos >= size:
+                return size
+            fh.seek(pos - 1)
+            fh.readline()  # finish the line we landed in
+            return fh.tell()
+
+        start, end = cut(size * part // parts), cut(size * (part + 1) // parts)
+        fh.seek(start)
+        data = fh.read(end - start)
+    return data.decode("utf-8", errors="replace"), start, first.decode("utf-8", errors="replace")
+
+
+def _lines_before(path: Path, offset: int) -> int:
+    count = 0
+    with open(path, "rb") as fh:
+        while offset > 0:
+            block = fh.read(min(offset, 8 * 1024 * 1024))
+            if not block:
+                break
+            count += block.count(b"\n")
+            offset -= len(block)
+    return count
+
+
+def scan_file(source: Source, path: Path, rules: Sequence[Rule], part: int = 0, parts: int = 1) -> List[Hit]:
+    if parts > 1:
+        text, byte_start, first_line = read_part(path, part, parts)
+        doc = source.document(path, text)
+        doc.first_line = first_line
+        if byte_start:
+            doc.line_offset = _lines_before(path, byte_start)
+    else:
+        loaded = source.load(path)
+        if not loaded:
+            return []
+        text = loaded
+        doc = source.document(path, text)
     hits: List[Hit] = []
     for rule, match in find_in_text(text, rules):
         secret = doc.decode(match.secret)
@@ -99,17 +144,25 @@ def scan_file(source: Source, path: Path, rules: Sequence[Rule]) -> List[Hit]:
     return hits
 
 
-def _scan_batch(args: Tuple[List[Tuple[Source, Path]], List[str]]) -> Tuple[List[Hit], List[str]]:
-    jobs, rule_ids = args
-    rules = get_rules(only=rule_ids)
-    hits: List[Hit] = []
-    errors: List[str] = []
-    for source, path in jobs:
-        try:
-            hits.extend(scan_file(source, path, rules))
-        except Exception as exc:  # one broken file must not end the scan
-            errors.append(f"{path}: {exc}")
-    return hits, errors
+# One unit of work: a whole file, or one part of a big JSONL file.
+Job = Tuple[Source, Path, int, int]
+
+
+def _scan_job(args: Tuple[Job, List[str]]) -> Tuple[List[Hit], List[str], str]:
+    (source, path, part, parts), rule_ids = args
+    try:
+        return scan_file(source, path, _rules_for(tuple(rule_ids)), part, parts), [], source.name
+    except Exception as exc:  # one broken file must not end the scan
+        return [], [f"{path}: {exc}"], source.name
+
+
+_RULE_CACHE: Dict[tuple, list] = {}
+
+
+def _rules_for(rule_ids: tuple) -> list:
+    if rule_ids not in _RULE_CACHE:
+        _RULE_CACHE[rule_ids] = get_rules(only=list(rule_ids))
+    return _RULE_CACHE[rule_ids]
 
 
 class Scanner:
@@ -156,33 +209,31 @@ class Scanner:
         return ScanResult(findings, stats)
 
     def _run(self, jobs: List[Tuple[Source, Path, int]], stats: ScanStats) -> List[Hit]:
-        total = len(jobs)
         workers = self.workers if self.workers is not None else min(8, os.cpu_count() or 1)
-        hits: List[Hit] = []
-        if workers <= 1 or stats.bytes < PARALLEL_THRESHOLD or total < 4:
-            for i, (source, path, _) in enumerate(jobs, 1):
-                batch_hits, errors = _scan_batch(([(source, path)], [r.id for r in self.rules]))
-                hits.extend(batch_hits)
-                stats.errors.extend(errors)
-                if self.progress:
-                    self.progress(i, total, source.name)
-            return hits
-        # Round-robin the files by size so every worker gets a similar share of bytes.
-        ordered = sorted(jobs, key=lambda j: -j[2])
-        batches: List[List[Tuple[Source, Path]]] = [[] for _ in range(workers * 4)]
-        for i, (source, path, _) in enumerate(ordered):
-            batches[i % len(batches)].append((source, path))
         rule_ids = [r.id for r in self.rules]
-        done = 0
+        parallel = workers > 1 and stats.bytes >= PARALLEL_THRESHOLD and len(jobs) >= 2
+        units: List[Job] = []
+        # Biggest first, so the long jobs start early and the small ones fill the gaps.
+        for source, path, size in sorted(jobs, key=lambda j: -j[2]):
+            parts = 1
+            if parallel and path.suffix == ".jsonl" and size > SPLIT_BYTES:
+                parts = min(64, -(-size // SPLIT_BYTES))
+            units.extend((source, path, i, parts) for i in range(parts))
+        total = len(units)
+        hits: List[Hit] = []
+        if not parallel:
+            results = (_scan_job((unit, rule_ids)) for unit in units)
+            return self._collect(results, total, hits, stats)
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            for batch, (batch_hits, errors) in zip(
-                batches, pool.map(_scan_batch, [(b, rule_ids) for b in batches])
-            ):
-                hits.extend(batch_hits)
-                stats.errors.extend(errors)
-                done += len(batch)
-                if self.progress and batch:
-                    self.progress(done, total, batch[-1][0].name)
+            results = pool.map(_scan_job, [(unit, rule_ids) for unit in units], chunksize=1)
+            return self._collect(results, total, hits, stats)
+
+    def _collect(self, results, total: int, hits: List[Hit], stats: ScanStats) -> List[Hit]:
+        for done, (unit_hits, errors, agent) in enumerate(results, 1):
+            hits.extend(unit_hits)
+            stats.errors.extend(errors)
+            if self.progress:
+                self.progress(done, total, agent)
         return hits
 
     def _merge(self, hits: List[Hit], stats: ScanStats) -> List[Finding]:
