@@ -99,7 +99,8 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
   const D = JSON.parse(document.getElementById("data").textContent);
   const SEV = ["critical", "high", "medium", "low"];
   const ORIGIN = {"prompt": "Pasted in a prompt", "tool-output": "Printed by a tool", "assistant": "Repeated by the model",
-                  "file-snapshot": "File backups", "history": "Prompt history", "other": "Session metadata"};
+                  "file-snapshot": "File backups", "history": "Prompt history", "config": "Agent settings",
+                  "other": "Session metadata"};
   const app = document.getElementById("app");
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const css = (name) => `var(--${name})`;  // follows a theme switch, no style recalc

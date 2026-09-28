@@ -216,7 +216,7 @@ class Watcher:
             if now - max(stamp, state.mtime if state else 0) < self.scrub_after:
                 continue
             del self.pending[path]
-            if path.suffix in NOT_SCRUBBABLE:
+            if path.suffix in NOT_SCRUBBABLE or (state and not state.source.scrubbable):
                 continue
             try:
                 count = scrub_file(path, ignore=self.ignore, rules=self.rules, in_place=True)

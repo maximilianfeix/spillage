@@ -98,6 +98,7 @@ Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, whic
 | **SpecStory** | `.specstory/history/*.md` in your projects |
 | **GitHub Copilot CLI** | `~/.copilot/session-state/`, `history-session-state/` |
 | | Aider and SpecStory write into the project folder, so spillage checks the current folder plus every folder your Claude Code and Codex sessions ran in |
+| **Agent settings** | MCP servers and allowed commands, see [below](#settings) |
 | **anything else** | `spillage --path <file or folder>`, any mix of JSONL, JSON and text |
 
 `spillage agents` shows what it found on your machine:
@@ -110,6 +111,18 @@ Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, whic
   ○ gemini    Gemini CLI           not found
     ~/.gemini
 ```
+
+<a id="settings"></a>
+
+### Agent settings
+
+Keys don't only end up in transcripts. They sit in plain text in the agents' settings, which every agent reads on start:
+
+- **MCP servers** with a token in their `env` or `headers`: `~/.claude.json`, `.mcp.json`, `~/.cursor/mcp.json`, Claude Desktop's `claude_desktop_config.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, Windsurf, VS Code's `mcp.json`, Cline/Roo/Kilo, OpenCode, Crush, Goose, Continue and Qwen
+- **commands you allowed once**: approve `curl -H "Authorization: Bearer …"` in Claude Code and the whole command, key included, is saved in `.claude/settings.local.json`
+- **old prompt history** that Claude Code kept per project in `~/.claude.json`
+
+spillage checks the global files and the ones in your project folders, and shows them as *saved in an agent's settings*. Claude Code's own login in `~/.claude.json` is not a leak and is left out. `scrub` doesn't touch the MCP servers and commands in these files, since whatever needs the key would stop working (prompts in that old history do get redacted); move the key into an environment variable (Claude Code expands `"GITHUB_TOKEN": "${GITHUB_TOKEN}"` in `.mcp.json` from your shell), then rotate it. `spillage scan --agent config` looks at nothing else.
 
 <a id="what-it-finds"></a>
 

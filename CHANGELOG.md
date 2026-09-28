@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- agent settings are scanned too (`--agent config`): MCP server definitions in `~/.claude.json`, `.mcp.json`, Cursor, Claude Desktop, Codex `config.toml`, Gemini, Qwen, Windsurf, VS Code, Cline/Roo/Kilo, OpenCode, Crush, Goose and Continue, Claude Code's allowed commands (an approved `curl -H "Authorization: …"` keeps the key in `settings.local.json`) and the old per-project prompt history in `~/.claude.json`. Claude Code's own login is left out, unless the same key also turns up somewhere else in the file. `scrub` leaves the MCP servers and commands alone and says to move the key into an environment variable instead; prompts in that old history do get redacted ([#47](https://github.com/maximilianfeix/spillage/issues/47))
+- `spillage repo` and the `spillage` pre-commit hook check committed `.mcp.json`, `.claude/settings*.json` and friends; they don't count as transcripts, so `--strict` doesn't fail on a clean one
+
 ## [0.6.9] - 2026-09-28
 
 ### Fixed

@@ -238,6 +238,10 @@ def cmd_scrub(args: argparse.Namespace) -> int:
     if report.signed:
         print(p(f"  left {report.signed} inside signed thinking blocks: editing those breaks `--resume` of that "
                 "session. Delete the session if that matters more.", "yellow"))
+    for file in report.settings:
+        print(p(f"  left {short_path(file)} alone: it's an agent's settings file, and the MCP server or command "
+                "that needs the key would break. Move the key into an environment variable, then rotate it.",
+                "yellow"))
     for file in report.skipped_active:
         print(p(f"  skipped {short_path(file)}: written in the last minute, probably this session. "
                 "Run again later or pass --include-active.", "yellow"))

@@ -16,9 +16,9 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .models import Finding, fingerprint
+from .models import Finding, Location, Origin, fingerprint
 from .rules import Rule, get_rules
 from .scanner import find_in_text
 from .sources import Source, decode_json_fragment, get_source, read_text_exact
@@ -36,6 +36,7 @@ class ScrubReport:
     replacements: int = 0
     signed: int = 0  # left inside signed thinking blocks, see redact_text
     skipped_active: List[str] = field(default_factory=list)
+    settings: List[str] = field(default_factory=list)  # agent settings, left alone on purpose
     failed: List[Tuple[str, str]] = field(default_factory=list)
     dry_run: bool = False
 
@@ -50,13 +51,15 @@ def plan(findings: Iterable[Finding]) -> Dict[str, Set[str]]:
 
 
 def redact_text(
-    text: str, targets: Set[str], rules: Sequence[Rule], is_json: bool, doc=None, stats: Optional[dict] = None
+    text: str, targets: Set[str], rules: Sequence[Rule], is_json: bool, doc=None, stats: Optional[dict] = None,
+    leave: Optional[Callable[[Location], bool]] = None,
 ) -> Tuple[str, int]:
     """Replace every match whose fingerprint is in `targets`. Returns (new text, count).
 
     With a Document, matches the scan ignored (inside base64 blobs) are left alone too, and so
     is text in a signed thinking block: the API checks those signatures on `--resume`, so an
-    edited block would break the session. Those are counted in stats["signed"]."""
+    edited block would break the session. Those are counted in stats["signed"]. Matches for
+    which `leave(location)` is true stay as they are too."""
     pieces = []
     last = 0
     count = 0
@@ -67,7 +70,7 @@ def redact_text(
             continue
         if doc is not None:
             location = doc.locate(match.start, secret)
-            if location is None:
+            if location is None or (leave is not None and leave(location)):
                 continue
             if _in_signed_block(location.json_path):
                 if stats is not None:
@@ -208,6 +211,18 @@ def scrub(
     agents = {loc.file: loc.agent for f in targets for loc in f.locations}
     for file, fps in sorted(plan(targets).items()):
         path = Path(file)
+        source = _source_for(agents.get(file, ""))
+        leave = None
+        if not source.scrubbable:
+            # settings: only prompts pasted into an old history in there get redacted, never the
+            # MCP servers and commands that need their keys
+            here = [(f.fingerprint, loc.origin) for f in targets for loc in f.locations if loc.file == file]
+            if any(origin != Origin.HISTORY for _, origin in here):
+                report.settings.append(file)
+            fps = fps & {fp for fp, origin in here if origin == Origin.HISTORY}
+            if not fps:
+                continue
+            leave = lambda loc: loc.origin != Origin.HISTORY  # noqa: E731
         if path.suffix in (".vscdb", ".db"):
             report.failed.append((file, "can't scrub a database yet, delete the chat in the agent instead"))
             continue
@@ -223,10 +238,9 @@ def scrub(
         if text is None:
             report.failed.append((file, "could not read it as text"))
             continue
-        source = _source_for(agents.get(file, ""))
         doc = source.document(path, text)
         stats: dict = {}
-        new, count = redact_text(text, fps, rules, doc.is_json, doc=doc, stats=stats)
+        new, count = redact_text(text, fps, rules, doc.is_json, doc=doc, stats=stats, leave=leave)
         report.signed += stats.get("signed", 0)
         if not count:
             if not stats.get("signed"):

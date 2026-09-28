@@ -61,6 +61,7 @@ class Source:
     name = "generic"
     label = "Files"
     patterns: Tuple[str, ...] = ()
+    scrubbable = True  # False for files an agent needs intact, like its settings
 
     def __init__(self, home: Optional[Path] = None) -> None:
         self.home = Path(home) if home else Path.home()
@@ -888,6 +889,145 @@ class Crush(SQLiteSource):
 
     def project_for(self, path: Path) -> str:
         return str(path.parent.parent)
+
+
+# ---- the agents' settings ----------------------------------------------------------------------
+
+# Top-level keys in ~/.claude.json that hold Claude Code's own login. Like Cursor's login in
+# state.vscdb, that's where the key is supposed to be, not a leak.
+_OWN_LOGIN_KEYS = ("primaryApiKey", "oauthAccount", "customApiKeyResponses")
+
+
+def _xdg_config(home: Path) -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+
+
+@register
+class AgentConfig(Source):
+    """Settings files: MCP server definitions, Claude Code's allowed commands, old prompt history.
+
+    Agents read these on every start, so a key in an MCP server's `env` or in an approved
+    `Bash(curl -H "Authorization: …")` command sits there in plain text for good. These aren't
+    logs: `scrub` leaves them alone, since cutting a key out would break the server that needs it."""
+
+    name = "config"
+    label = "Agent settings"
+    scrubbable = False
+    # relative to the home folder
+    home_files = (
+        ".claude.json", ".claude/settings.json", ".claude/settings.local.json", ".mcp.json",
+        ".cursor/mcp.json", ".codeium/windsurf/mcp_config.json", ".gemini/settings.json",
+        ".qwen/settings.json", ".codex/config.toml", ".copilot/mcp-config.json",
+        ".continue/config.yaml", ".continue/config.json", ".continue/mcpServers/*",
+    )
+    # relative to ~/.config (or XDG_CONFIG_HOME)
+    xdg_files = ("opencode/opencode.json", "opencode/opencode.jsonc", "crush/crush.json", "goose/config.yaml")
+    # relative to the per-OS application support folder
+    app_files = (
+        "Claude/claude_desktop_config.json", "Code/User/mcp.json", "Code - Insiders/User/mcp.json",
+        "Cursor/User/mcp.json", "Windsurf/User/mcp.json",
+        "*/User/globalStorage/*/settings/*mcp_settings.json",  # Cline, Roo Code, Kilo Code
+    )
+    # relative to each project folder the agents worked in
+    project_files = (
+        ".mcp.json", ".claude/settings.json", ".claude/settings.local.json", ".cursor/mcp.json",
+        ".vscode/mcp.json", ".gemini/settings.json", ".qwen/settings.json", "opencode.json", ".crush.json",
+    )
+
+    def roots(self) -> List[Path]:
+        return [self.home]
+
+    def describe_roots(self, roots: List[Path]) -> str:
+        return "MCP servers and settings of every agent, in ~ and your project folders"
+
+    def discover(self) -> Iterator[Path]:
+        places: List[Tuple[Path, Tuple[str, ...]]] = [(self.home, self.home_files)]
+        for env, files in (("CLAUDE_CONFIG_DIR", (".claude.json", "settings.json", "settings.local.json")),
+                           ("CODEX_HOME", ("config.toml",))):
+            if os.environ.get(env):
+                places.append((Path(os.environ[env]), files))
+        places.append((_xdg_config(self.home), self.xdg_files))
+        places += [(root, self.app_files) for root in _app_support()]
+        places += [(project, self.project_files) for project in known_projects(self.home)]
+        seen = set()
+        for root, patterns in places:
+            if not _is_dir(root):
+                continue
+            for pattern in patterns:
+                for path in sorted(root.glob(pattern)) if "*" in pattern else [root / pattern]:
+                    try:
+                        usable = path.is_file() and not path.is_symlink()
+                    except OSError:
+                        continue
+                    if usable and path not in seen:
+                        seen.add(path)
+                        yield path
+
+    def document(self, path: Path, text: str) -> Document:
+        return _ConfigDocument(self, path, text)
+
+    def origin(self, record: Any, path: JsonPath) -> str:
+        # ~/.claude.json kept each project's prompt history until Claude Code 1.0
+        return Origin.HISTORY if "history" in path[2:3] and path[:1] == ("projects",) else Origin.CONFIG
+
+    def text_origin(self, path: Path) -> str:
+        return Origin.CONFIG
+
+    def update_state(self, record: Any, state: dict) -> None:
+        pass  # settings have no session; a top-level "cwd" would be something else
+
+    def project_for(self, path: Path) -> str:
+        for project in known_projects(self.home):
+            if project != self.home and project in path.parents:
+                return str(project)
+        return ""
+
+    def session_for(self, path: Path, state: dict) -> str:
+        return ""
+
+
+_PRIMARY_KEY = re.compile(r'"primaryApiKey"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+class _ConfigDocument(Document):
+    """Settings are small, so a match is placed exactly: the n-th time a key appears in the text is
+    the n-th time it appears in the parsed JSON. (Logs take the first place a key appears on its
+    line, which is right there, but a settings file is one big record, and the same key can sit in
+    an MCP server's env and in a pasted prompt.) In .claude.json, the login fields are left out."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._login_spans: List[Tuple[int, int]] = []
+        self._start = 0
+
+    def locate(self, start: int, secret: str) -> Optional[Location]:
+        if self.kind == "json" and self._parsed is _UNSET:
+            try:
+                data = json.loads(self.text)
+            except ValueError:
+                data = None
+            if self.path.name == ".claude.json" and isinstance(data, dict):
+                self._login_spans = [m.span(1) for m in _PRIMARY_KEY.finditer(self.text)]
+                data = {k: v for k, v in data.items() if k not in _OWN_LOGIN_KEYS}
+            self._parsed = data
+        if any(a <= start < b for a, b in self._login_spans):
+            return None
+        self._start = start
+        return super().locate(start, secret)
+
+    def _locate_json(self, lineno: int, secret: str) -> Optional[Location]:
+        data = self._parsed
+        if isinstance(data, (dict, list)):
+            start = self._start
+            before = self.text.count(secret, 0, start)
+            before -= sum(self.text.count(secret, a, min(b, start)) for a, b in self._login_spans if a < start)
+            seen = 0
+            for jpath, value in iter_strings(data):
+                seen += value.count(secret)
+                if seen > before:
+                    state = {"session": "", "project": ""}
+                    return self._location(lineno, jpath, self.source.origin(data, jpath), state, "")
+        return super()._locate_json(lineno, secret)  # escaped in the text, or not parsed
 
 
 class PathSource(Source):

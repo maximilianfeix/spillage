@@ -36,6 +36,19 @@ TRANSCRIPTS = (
 _COMPILED = [(re.compile(p), agent) for p, agent in TRANSCRIPTS]
 TRANSCRIPT_REGEX = "|".join(f"({p})" for p, _ in TRANSCRIPTS)
 
+# Agent settings that are often committed on purpose (.mcp.json is meant to be shared). They're
+# scanned for secrets but aren't transcripts, so --strict doesn't fail on them.
+SETTINGS = (
+    r"(^|/)\.mcp\.json$",
+    r"(^|/)\.claude/settings(\.local)?\.json$",
+    r"(^|/)\.(cursor|vscode)/mcp\.json$",
+    r"(^|/)\.(gemini|qwen)/settings\.json$",
+    r"(^|/)(opencode\.jsonc?|\.crush\.json|claude_desktop_config\.json)$",
+)
+_SETTINGS = [re.compile(p) for p in SETTINGS]
+# what the `spillage` pre-commit hook passes on: transcripts and settings
+HOOK_REGEX = TRANSCRIPT_REGEX + "|" + "|".join(f"({p})" for p in SETTINGS)
+
 # fingerprints to ignore for this repo, one per line, committed with it
 REPO_IGNORE = ".spillageignore"
 
@@ -46,6 +59,11 @@ def transcript_agent(relpath: str) -> Optional[str]:
         if pattern.search(rel):
             return agent
     return None
+
+
+def is_settings(relpath: str) -> bool:
+    rel = relpath.replace("\\", "/")
+    return any(p.search(rel) for p in _SETTINGS)
 
 
 def tracked_files(repo: Path) -> List[str]:
@@ -133,6 +151,8 @@ def scan_repo(
         agent = transcript_agent(rel)
         if agent:
             transcripts[rel] = agent
+        elif is_settings(rel):
+            agent = "config"
         elif not all_files:
             continue
         path = root / rel
