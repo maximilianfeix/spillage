@@ -153,7 +153,7 @@ class Watcher:
             if location is None:
                 continue
             self.seen.add(fp)
-            finding = Finding(rule.id, rule.name, rule.provider, rule.severity_for(secret), secret,
+            finding = Finding(rule.id, rule.name_for(secret), rule.provider, rule.severity_for(secret), secret,
                               rule.rotate_url, [location])
             events.append(Event(finding, location))
         return events
