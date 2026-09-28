@@ -290,7 +290,7 @@ repos:
 4. **Locate.** Only the JSON line that holds a match gets parsed, to find out which session and project it belongs to and whether it came from a prompt, a tool result or the model. A match that only exists inside a base64 image or a thinking signature is dropped as noise.
 5. **Dedupe.** One finding per distinct secret, with every place it was seen, across agents and sessions.
 
-Sources, rules and output formats are each a small registry, so adding an agent, a key type or a format is one class or function. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Sources, rules and output formats are each a small registry, so adding an agent, a key type or a format is one class or function. See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
 
 <a id="from-python"></a>
 
