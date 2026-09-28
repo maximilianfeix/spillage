@@ -104,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="how long a file must be untouched before --scrub touches it (default: 90)")
     watch.add_argument("--interval", type=float, default=2.0, metavar="SECONDS", help="poll interval (default: 2)")
     watch.add_argument("--no-notify", action="store_true", help="no desktop notifications, terminal only")
+    watch.add_argument("--no-env", action="store_true", help="don't look for the values from your .env files")
 
     repo = sub.add_parser("repo", help="find agent transcripts committed to a git repo, and secrets in them")
     repo.add_argument("path", nargs="?", default=".", type=Path, help="the repository (default: here)")
@@ -151,16 +152,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 130
 
 
+ENV_RULE = "env-value"
+
+
 def build_rules(args: argparse.Namespace) -> list:
-    """Built-in rules, plus the exact values from the .env files of your projects."""
-    rules = get_rules(only=getattr(args, "rules", None), exclude=getattr(args, "skip_rules", None))
-    if getattr(args, "no_env", False) or getattr(args, "rules", None):
+    """Built-in rules, plus the exact values from the .env files of your projects.
+
+    `env-value` works with --rules and --skip-rules like any other id."""
+    only = list(getattr(args, "rules", None) or [])
+    skip = list(getattr(args, "skip_rules", None) or [])
+    want_env = not getattr(args, "no_env", False) and ENV_RULE not in skip and (not only or ENV_RULE in only)
+    only = [r for r in only if r != ENV_RULE]
+    skip = [r for r in skip if r != ENV_RULE]
+    only_env = bool(getattr(args, "rules", None)) and not only  # --rules env-value
+    rules = [] if only_env else get_rules(only=only or None, exclude=skip or None)
+    if not want_env:
         return rules
-    from .envfiles import collect
-    from .rules import with_known_values
+    from .envfiles import rules_with_env
     from .sources import known_projects
 
-    return with_known_values(rules, collect(known_projects(Path.home())))
+    return rules_with_env(rules, known_projects(Path.home()))
 
 
 def run_scan(args: argparse.Namespace, progress: Optional[Progress] = None) -> ScanResult:
@@ -441,7 +452,8 @@ def cmd_rules(args: argparse.Namespace) -> int:
     print()
     for rule in rules:
         print(f"  {p.badge(rule.severity)} {p(f'{rule.id:<26}', 'bold')} {rule.name}")
-    print(p(f"\n  {len(rules)} rules. Leave some out with --skip-rules id,id\n", "dim"))
+    print(f"  {p.badge(Severity.HIGH)} {p(f'{ENV_RULE:<26}', 'bold')} Values from your projects' .env files")
+    print(p(f"\n  {len(rules) + 1} rules. Leave some out with --skip-rules id,id\n", "dim"))
     return EXIT_CLEAN
 
 

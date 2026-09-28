@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.1] - 2026-09-28
+
+### Fixed
+- `.env` values: variable names are matched by whole words now (`AUTHOR_NAME` and `NEXTAUTH_URL` were treated as secrets), public keys (`NEXT_PUBLIC_…`, `…_PUBLISHABLE_…`) and plain URLs are skipped, quoted values with a trailing comment lose their quotes, multi-line values are left out instead of matching their first line
+- a value ending in a backslash could be redacted into broken JSON; the escaped form is matched first now
+- all values are found in one pass instead of one pass per value, and the list reaches worker processes once instead of with every file
+- `env-value` works with `--rules` / `--skip-rules` and shows up in `spillage rules`; `watch` has `--no-env`
+- the guard's session-end scrub also removes values from the project's `.env`
+
 ## [0.6.0] - 2026-09-28
 
 ### Added

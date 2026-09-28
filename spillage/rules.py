@@ -627,30 +627,28 @@ def _mixed(value: str) -> bool:
 class KnownValueRule(Rule):
     """Exact values you already know are secret, e.g. from your projects' .env files.
 
-    They are looked up with str.find, raw and in their JSON-escaped form, so a password with a
-    quote in it is found inside a JSONL log too. Findings are named after the variable, never
+    They are looked up raw and in their JSON-escaped form, so a password with a quote in it is
+    found inside a JSONL log too. Findings are named after the variable, never
     shown in full."""
 
     def __init__(self, values: Dict[str, str]) -> None:
         super().__init__("env-value", "Value from a .env file", "Your .env", r"(?!)", Severity.HIGH)
         self.values = dict(values)  # value -> label
-        self._needles: Dict[str, str] = {}
+        needles = set(self.values)
         for value in self.values:
-            self._needles[value] = value
-            escaped = json.dumps(value, ensure_ascii=False)[1:-1]
-            if escaped != value:
-                self._needles[escaped] = value
+            needles.add(json.dumps(value, ensure_ascii=False)[1:-1])
+        # One pass over the text for all values. Longest first, so the JSON-escaped form of a
+        # value wins over its raw form when both match at the same spot.
+        ordered = sorted(needles, key=lambda n: (-len(n), n))
+        self._regex = re.compile("|".join(re.escape(n) for n in ordered)) if ordered else re.compile(r"(?!)")
 
     def find(self, text: str) -> Iterator[Match]:
-        for needle in self._needles:
-            pos = text.find(needle)
-            while pos != -1:
-                end = pos + len(needle)
-                left_ok = needle[0] not in _TOKEN_CHARS or left_boundary_ok(text, pos)
-                right_ok = end >= len(text) or needle[-1] not in _TOKEN_CHARS or text[end] not in _TOKEN_CHARS
-                if left_ok and right_ok:
-                    yield Match(needle, pos, end)
-                pos = text.find(needle, pos + 1)
+        for m in self._regex.finditer(text):
+            needle, pos, end = m.group(0), m.start(), m.end()
+            left_ok = needle[0] not in _TOKEN_CHARS or left_boundary_ok(text, pos)
+            right_ok = end >= len(text) or needle[-1] not in _TOKEN_CHARS or text[end] not in _TOKEN_CHARS
+            if left_ok and right_ok:
+                yield Match(needle, pos, end)
 
     def name_for(self, secret: str) -> str:
         label = self.values.get(secret)
@@ -663,7 +661,7 @@ _BY_ID = {r.id: r for r in BUILTIN_RULES}
 def rule_spec(rules: Sequence[Rule]) -> tuple:
     """A picklable description of a rule list, for worker processes."""
     return tuple(
-        ("env-value", tuple(sorted(r.values.items()))) if isinstance(r, KnownValueRule) else r.id for r in rules
+        ("env-value", tuple(r.values.items())) if isinstance(r, KnownValueRule) else r.id for r in rules
     )
 
 
