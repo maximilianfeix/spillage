@@ -1,0 +1,15 @@
+name: Support another agent
+description: A coding agent whose logs spillage should read
+labels: [agents]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where does it keep conversations?
+      description: Paths on macOS / Linux / Windows and the file format (JSONL, JSON, SQLite, ...), if you know them.

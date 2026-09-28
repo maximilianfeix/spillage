@@ -1,0 +1,28 @@
+name: New detection rule
+description: A kind of key spillage doesn't know yet
+labels: [rules]
+body:
+  - type: markdown
+    attributes:
+      value: "**Don't paste a real key.** Describe its shape: prefix, length, alphabet, checksum if any."
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What the key looks like
+      placeholder: "starts with abc_, then 40 base62 characters"
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to the provider's docs on the format, if there is one
+  - type: input
+    id: rotate
+    attributes:
+      label: Where do you revoke or rotate it?

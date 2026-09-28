@@ -1,0 +1,31 @@
+name: Bug report
+description: Something went wrong, or a secret was missed or wrongly flagged
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a real secret here.** Use the masked form and fingerprint spillage prints, or make up a fake one with the same shape.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: spillage --version
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      multiple: true
+      options: [Claude Code, Codex CLI, Gemini CLI, OpenCode, Cline / Roo / Kilo, Continue, Copilot CLI, other]
+  - type: input
+    id: os
+    attributes:
+      label: OS and Python version
