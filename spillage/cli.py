@@ -292,7 +292,8 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
                 notify(f"spillage: {f.rule_name} leaked",
                        f"{f.masked} in {agent_label(loc.agent)}. Rotate it.")
         for path, n in watcher.scrub_quiet():
-            print(f"  {p(time.strftime('%H:%M:%S'), 'dim')}  {p('✓ scrubbed', 'green')} {n} in {short_path(str(path))}", flush=True)
+            stamp = p(time.strftime("%H:%M:%S"), "dim")
+            print(f"  {stamp}  {p('✓ scrubbed', 'green')} {n} in {short_path(str(path))}", flush=True)
         if max_ticks is None or ticks < max_ticks:
             time.sleep(args.interval)
     return EXIT_CLEAN

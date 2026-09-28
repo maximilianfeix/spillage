@@ -246,7 +246,7 @@ class Document:
             line=lineno,
             json_path=format_path(jpath),
             session=self.source.session_for(self.path, state),
-            project=state.get("project", ""),
+            project=state.get("project") or self.source.project_for(self.path),
             timestamp=stamp,
             origin=origin,
         )
@@ -684,6 +684,120 @@ class SpecStory(ProjectSource):
 
     def session_for(self, path: Path, state: dict) -> str:
         return path.stem
+
+
+@register
+class QwenCode(GeminiCLI):
+    """A Gemini CLI fork with the same layout under ~/.qwen."""
+
+    name = "qwen"
+    label = "Qwen Code"
+    patterns = ("tmp/*/chats/*.json", "tmp/*/logs.json", "tmp/*/checkpoint*.json", "tmp/*/checkpoints/*.json")
+
+    def roots(self) -> List[Path]:
+        return [self.home / ".qwen"]
+
+
+# ---- SQLite-backed agents --------------------------------------------------------------------
+
+class SQLiteSource(Source):
+    """Agents that keep sessions in SQLite. Each row becomes one JSON line (text columns only,
+    JSON columns parsed), so the usual matching, context and dedup apply. Opened read-only and
+    immutable, so a running agent is never blocked."""
+
+    def load(self, path: Path) -> Optional[str]:
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+        except sqlite3.Error:
+            return None
+        lines = []
+        try:
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+            for table in tables:
+                if table.startswith("sqlite_"):
+                    continue
+                cur = conn.execute(f'SELECT * FROM "{table}"')
+                cols = [d[0] for d in cur.description]
+                for row in cur:
+                    lines.append(json.dumps(_sqlite_record(table, cols, row), ensure_ascii=False, default=str))
+        except sqlite3.Error:
+            return None
+        finally:
+            conn.close()
+        return "\n".join(lines) or None
+
+    def document(self, path: Path, text: str) -> Document:
+        return Document(self, path, text, kind="jsonl")
+
+    def update_state(self, record: Any, state: dict) -> None:
+        if not isinstance(record, dict):
+            return
+        for key in ("session_id", "sessionId"):
+            if isinstance(record.get(key), (str, int)):
+                state["session"] = str(record[key])
+        if record.get("table") == "sessions" and isinstance(record.get("id"), (str, int)):
+            state["session"] = str(record["id"])
+        for key in ("working_dir", "cwd"):
+            if isinstance(record.get(key), str):
+                state["project"] = record[key]
+
+
+def _sqlite_record(table: str, cols: List[str], row: tuple) -> dict:
+    record: Dict[str, Any] = {"table": table}
+    for col, value in zip(cols, row):
+        if isinstance(value, bytes):
+            try:
+                value = value.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # compressed or binary
+        if isinstance(value, str) and value[:1] in "[{":
+            try:
+                value = json.loads(value)
+            except ValueError:
+                pass
+        record[col] = value
+    return record
+
+
+@register
+class Goose(SQLiteSource):
+    name = "goose"
+    label = "Goose"
+    patterns = ("goose/sessions/sessions.db", "goose/sessions/*.jsonl", "Block/goose/data/sessions/sessions.db")
+
+    def roots(self) -> List[Path]:
+        data = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
+        config = Path(os.environ.get("XDG_CONFIG_HOME") or self.home / ".config")
+        return [data, config] + ([Path(os.environ["APPDATA"])] if os.environ.get("APPDATA") else [])
+
+    def load(self, path: Path) -> Optional[str]:
+        return Source.load(self, path) if path.suffix == ".jsonl" else super().load(path)
+
+
+@register
+class Crush(SQLiteSource):
+    name = "crush"
+    label = "Crush"
+    patterns = (".crush/crush.db",)
+
+    def roots(self) -> List[Path]:
+        roots = set(known_projects(self.home))
+        data = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
+        try:
+            registry = json.loads((data / "crush" / "projects.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            registry = None
+        items = registry.get("projects", registry) if isinstance(registry, dict) else registry
+        for item in items or []:
+            path = item.get("path") if isinstance(item, dict) else item
+            if isinstance(path, str) and Path(path).is_dir():
+                roots.add(Path(path))
+        return sorted(roots)
+
+    def project_for(self, path: Path) -> str:
+        return str(path.parent.parent)
 
 
 class PathSource(Source):
