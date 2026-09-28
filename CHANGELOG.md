@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-09-28
 
 ### Added
 - `spillage repo`: agent transcripts committed to a git repository and the secrets in them. `--strict` fails on any transcript, `--all-files` scans every tracked file, `-f github` writes annotations and a job summary
