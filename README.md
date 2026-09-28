@@ -26,7 +26,7 @@
 
 Your coding agent writes down everything. Every `.env` it read, every key you pasted "just to test this one call", every `printenv` it ran to debug something. Claude Code, Codex, Gemini CLI, Cline and the rest keep those conversations on your disk as plain JSON, and every one of those keys was also sent to the model provider when it happened.
 
-**spillage** finds them. It reads the logs of seven coding agents, tells you which keys leaked, *how* they got there (you pasted it, a tool printed it, the model repeated it) and links you to the page where you rotate each one. Then it scrubs them from disk and installs hooks so the next one gets blocked before it's sent.
+**spillage** finds them. It reads the logs of eight coding agents, tells you which keys leaked, *how* they got there (you pasted it, a tool printed it, the model repeated it) and links you to the page where you rotate each one. Then it scrubs them from disk and installs hooks so the next one gets blocked before it's sent.
 
 <div align="center">
 <img src="docs/demo.svg" alt="Animated demo: spillage finds a GitHub token, a Stripe key and an Anthropic key in Claude Code and Codex logs, scrubs them and installs the guard hooks" width="860">
@@ -83,6 +83,7 @@ Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, whic
 | **OpenCode** | `~/.local/share/opencode/storage/` |
 | **Cline, Roo Code, Kilo Code** | task histories in the extension storage of VS Code, Cursor, Windsurf, VSCodium and Kiro |
 | **Continue** | `~/.continue/sessions/` |
+| **Cursor** | chats in `state.vscdb` (SQLite), global and per workspace. Only chat rows are read, never Cursor's own login |
 | **GitHub Copilot CLI** | `~/.copilot/session-state/`, `history-session-state/` |
 | **anything else** | `spillage --path <file or folder>`, any mix of JSONL, JSON and text |
 
@@ -200,7 +201,7 @@ The config goes where each agent expects it: `~/.claude/settings.json`, `~/.code
 
 ```
  agent logs ──▶ discover ──▶ raw text ──▶ 40 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
- (7 agents)     per agent    per file     literal-     checksums,   parse only  one finding
+ (8 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with
                                           on all cores              a match
@@ -277,7 +278,7 @@ If it's a kind of key spillage doesn't know, [request a rule](https://github.com
 <summary><b>Does it work with Cursor?</b></summary>
 <br>
 
-Cline, Roo and Kilo running inside Cursor, yes. Cursor's own chat keeps its history in SQLite, which is [next](https://github.com/maximilianfeix/spillage/issues/7).
+Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read-only and without taking a lock, so it's fine while Cursor is running. `scrub` doesn't touch that database yet; delete the chat in Cursor instead. Cline, Roo and Kilo inside Cursor are covered too.
 
 </details>
 
@@ -286,7 +287,7 @@ Cline, Roo and Kilo running inside Cursor, yes. Cursor's own chat keeps its hist
 ## Roadmap
 
 - [ ] [CI on all three operating systems](https://github.com/maximilianfeix/spillage/issues/1)
-- [ ] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7) (it keeps chats in SQLite)
+- [x] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7)
 - [ ] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
 - [ ] PyPI release
 

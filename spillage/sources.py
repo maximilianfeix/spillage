@@ -142,11 +142,11 @@ class Document:
     a match get parsed, to find out who said it (prompt, tool output, ...) and in which session.
     """
 
-    def __init__(self, source: Source, path: Path, text: str) -> None:
+    def __init__(self, source: Source, path: Path, text: str, kind: Optional[str] = None) -> None:
         self.source = source
         self.path = path
         self.text = text
-        self.kind = {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
+        self.kind = kind or {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
         self._parsed: Any = _UNSET
         self._first_state: Optional[dict] = None
 
@@ -492,6 +492,99 @@ class CopilotCLI(Source):
 
     def roots(self) -> List[Path]:
         return [self.home / ".copilot"]
+
+
+# ---- Cursor ------------------------------------------------------------------------------------
+
+# Rows in Cursor's SQLite databases that hold chats. Everything else in there is editor state
+# (and Cursor's own login token, which is none of our business).
+_CURSOR_KV_PREFIXES = ("bubbleId:", "composerData:", "agentKv:", "messageRequestContext:", "checkpointId:")
+_CURSOR_ITEM_KEYS = (
+    "aiService.prompts",
+    "aiService.generations",
+    "workbench.panel.aichat.view.aichat.chatdata",
+    "composer.composerData",
+)
+
+
+@register
+class Cursor(Source):
+    """Cursor keeps chats in SQLite (`state.vscdb`). Each chat row becomes one JSON line of a
+    virtual JSONL document, so matching, context and dedup work exactly as for the others."""
+
+    name = "cursor"
+    label = "Cursor"
+    patterns = ("Cursor/User/globalStorage/state.vscdb", "Cursor/User/workspaceStorage/*/state.vscdb")
+
+    def roots(self) -> List[Path]:
+        return _app_support()
+
+    def load(self, path: Path) -> Optional[str]:
+        import sqlite3
+
+        try:
+            # immutable: never take a lock on a database Cursor may have open
+            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+        except sqlite3.Error:
+            return None
+        lines = []
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "cursorDiskKV" in tables:
+                where = " OR ".join("key LIKE ?" for _ in _CURSOR_KV_PREFIXES)
+                rows = conn.execute(
+                    f"SELECT key, value FROM cursorDiskKV WHERE {where} ORDER BY rowid",
+                    [p + "%" for p in _CURSOR_KV_PREFIXES],
+                )
+                lines += [_cursor_line(k, v) for k, v in rows]
+            if "ItemTable" in tables:
+                marks = ",".join("?" for _ in _CURSOR_ITEM_KEYS)
+                rows = conn.execute(f"SELECT key, value FROM ItemTable WHERE key IN ({marks})", _CURSOR_ITEM_KEYS)
+                lines += [_cursor_line(k, v) for k, v in rows]
+        except sqlite3.Error:
+            return None
+        finally:
+            conn.close()
+        return "\n".join(line for line in lines if line) or None
+
+    def document(self, path: Path, text: str) -> Document:
+        return Document(self, path, text, kind="jsonl")
+
+    def update_state(self, record: Any, state: dict) -> None:
+        if isinstance(record, dict) and isinstance(record.get("key"), str):
+            parts = record["key"].split(":")
+            if len(parts) >= 2:
+                state["session"] = parts[1]
+
+    def origin(self, record: Any, path: JsonPath) -> str:
+        value = record.get("value") if isinstance(record, dict) else None
+        if isinstance(value, dict):
+            keys = _keys(path)
+            if keys & {"toolResults", "toolFormerData", "result", "output"}:
+                return Origin.TOOL
+            if value.get("type") == 1:
+                return Origin.PROMPT
+            if value.get("type") == 2:
+                return Origin.ASSISTANT
+        return generic_origin(record, path)
+
+    def session_for(self, path: Path, state: dict) -> str:
+        return state.get("session") or path.parent.name
+
+
+def _cursor_line(key: Any, value: Any) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    if not isinstance(value, str) or not value:
+        return ""
+    try:
+        parsed: Any = json.loads(value)
+    except ValueError:
+        parsed = value
+    if isinstance(parsed, dict):
+        # Cursor's own per-chat encryption keys, not something anyone leaked
+        parsed = {k: v for k, v in parsed.items() if not str(k).endswith("EncryptionKey")}
+    return json.dumps({"key": str(key), "value": parsed}, ensure_ascii=False)
 
 
 class PathSource(Source):
