@@ -66,3 +66,47 @@ def test_specstory_history(project):
 
 def test_nothing_in_projects(project):
     assert scan(["aider", "specstory"]) == {}
+
+
+def test_unreadable_project_folder_is_skipped(home, monkeypatch):
+    from pathlib import Path
+
+    from spillage import sources
+
+    home.claude_session(project="/locked/proj", records=[{"type": "user", "message": {"content": "hi"}}])
+    real = Path.is_dir
+
+    def is_dir(self):
+        if str(self).startswith("/locked"):
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    sources._PROJECTS_CACHE.clear()
+    assert Path("/locked/proj") not in known_projects(home.root)
+    assert scan(["aider", "specstory"]) == {}
+
+
+def test_projects_from_archived_codex_sessions(home, tmp_path):
+    from conftest import write_jsonl
+
+    from spillage import sources
+
+    old = tmp_path / "old-api"
+    old.mkdir()
+    write_jsonl(home.root / ".codex/archived_sessions/rollout-x.jsonl",
+                [{"type": "session_meta", "payload": {"id": "x", "cwd": str(old)}}])
+    sources._PROJECTS_CACHE.clear()
+    assert old in known_projects(home.root)
+
+
+def test_specstory_thought_process_is_the_model(project):
+    key = fakes.npm()
+    hist = project / ".specstory" / "history"
+    hist.mkdir(parents=True)
+    (hist / "a.md").write_text(
+        "_**Assistant**_\n\n<think><details><summary>Thought Process</summary>\n"
+        f"the key is {key}\n</details></think>\n",
+        encoding="utf-8",
+    )
+    assert scan(["specstory"])[key].origins == [Origin.ASSISTANT]

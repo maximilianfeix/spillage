@@ -57,6 +57,10 @@ def home(tmp_path, monkeypatch) -> FakeHome:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))
+    monkeypatch.chdir(root)  # never scan the real working directory's project logs
+    from spillage import sources
+
+    sources._PROJECTS_CACHE.clear()
     return FakeHome(root)
 
 

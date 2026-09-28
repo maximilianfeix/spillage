@@ -80,6 +80,12 @@ class Source:
                         seen.add(path)
                         yield path
 
+    def describe_roots(self, roots: List[Path]) -> str:
+        from .term import short_path
+
+        shown = ", ".join(short_path(str(r)) for r in roots[:3])
+        return shown + (f" and {len(roots) - 3} more" if len(roots) > 3 else "")
+
     def installed(self) -> bool:
         return any(True for _ in self.discover())
 
@@ -639,26 +645,49 @@ def _cursor_line(key: Any, value: Any) -> str:
 
 # ---- agents that write their logs into the project folder --------------------------------------
 
-def known_projects(home: Path) -> List[Path]:
+_PROJECTS_CACHE: Dict[Tuple[str, str], Tuple[float, List[Path]]] = {}
+
+
+def _is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:  # unreadable, e.g. a root-owned volume an old session ran in
+        return False
+
+
+def known_projects(home: Path, max_age: float = 30.0) -> List[Path]:
     """Project folders worth checking: the current one, plus every working directory that
-    Claude Code and Codex sessions mention. Only the first few KB of each session are read."""
-    found = {Path.cwd()}
-    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude") / "projects"
-    codex = Path(os.environ.get("CODEX_HOME") or home / ".codex") / "sessions"
-    candidates = list(claude.glob("*/*.jsonl")) + list(codex.glob("**/*.jsonl"))
-    for path in candidates:
+    Claude Code and Codex sessions mention. Only the first few KB of each session are read,
+    and the answer is reused for `max_age` seconds."""
+    import time
+
+    try:
+        cwd = Path.cwd()
+    except OSError:  # the current folder was deleted
+        cwd = None
+    key = (str(home), str(cwd))
+    hit = _PROJECTS_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < max_age:
+        return list(hit[1])
+    found = {cwd} if cwd else set()
+    session_files: List[Path] = []
+    for source in (ClaudeCode(home), Codex(home)):  # same folders and patterns as the scan uses
+        session_files += [p for p in source.discover() if p.suffix == ".jsonl" and "history" not in p.name]
+    for path in session_files:
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
                 head = fh.read(16384)
         except OSError:
             continue
-        for m in re.finditer(r'"cwd"\s*:\s*"((?:[^"\\]|\\.)+)"', head):
+        m = re.search(r'"cwd"\s*:\s*"((?:[^"\\]|\\.)+)"', head)
+        if m:
             try:
                 found.add(Path(json.loads('"' + m.group(1) + '"')))
             except ValueError:
                 pass
-            break
-    return sorted(p for p in found if p.is_dir())
+    result = sorted(p for p in found if _is_dir(p))
+    _PROJECTS_CACHE[key] = (time.monotonic(), result)
+    return list(result)
 
 
 class ProjectSource(Source):
@@ -667,17 +696,10 @@ class ProjectSource(Source):
     def roots(self) -> List[Path]:
         return known_projects(self.home)
 
-    def project_for(self, path: Path) -> str:
-        for parent in path.parents:
-            if any((parent / marker).exists() for marker in self.patterns if "/" not in marker):
-                return str(parent)
-            if parent.name == ".specstory":
-                return str(parent.parent)
-        return str(path.parent)
+    def describe_roots(self, roots: List[Path]) -> str:
+        return f"{len(roots)} project folders (this one and the ones your agent sessions ran in)"
 
 
-_AIDER_USER = re.compile(r"^#### ", re.M)
-_AIDER_TOOL = re.compile(r"^> ", re.M)
 
 
 @register
@@ -685,6 +707,9 @@ class Aider(ProjectSource):
     name = "aider"
     label = "Aider"
     patterns = (".aider.chat.history.md", ".aider.input.history")
+
+    def project_for(self, path: Path) -> str:
+        return str(path.parent)
 
     def text_origin_at(self, path: Path, text: str, offset: int) -> str:
         if path.name == ".aider.input.history":
@@ -707,17 +732,45 @@ class SpecStory(ProjectSource):
     label = "SpecStory"
     patterns = (".specstory/history/*.md",)
 
+    _index: Tuple[int, list, list] = (0, [], [])
+
+    def project_for(self, path: Path) -> str:
+        return str(path.parent.parent.parent)  # <project>/.specstory/history/<file>.md
+
+    def _events(self, text: str) -> Tuple[list, list]:
+        """Role headers and <details> opens/closes, indexed once per text (bisect per match)."""
+        if self._index[0] != id(text):
+            roles = [(m.start(), m.group(1)) for m in _SPECSTORY_ROLE.finditer(text)]
+            blocks = []
+            for m in re.finditer(r"<details>(\s*<summary>([^<]*)</summary>)?|</details>", text):
+                if m.group(0).startswith("</"):
+                    blocks.append((m.start(), "close", ""))
+                else:
+                    blocks.append((m.start(), "open", (m.group(2) or "").strip().lower()))
+            self._index = (id(text), roles, blocks)
+        return self._index[1], self._index[2]
+
     def text_origin_at(self, path: Path, text: str, offset: int) -> str:
-        role = ""
-        for m in _SPECSTORY_ROLE.finditer(text, 0, offset):
-            role = m.group(1)
+        import bisect
+
+        roles, blocks = self._events(text)
+        i = bisect.bisect_right(roles, (offset, "~")) - 1
+        role = roles[i][1] if i >= 0 else ""
         if role == "User":
             return Origin.PROMPT
-        if role:
-            before = text.rfind("<details>", 0, offset)
-            closed = text.rfind("</details>", 0, offset)
-            return Origin.TOOL if before > closed else Origin.ASSISTANT
-        return Origin.OTHER
+        if not role:
+            return Origin.OTHER
+        stack = []  # open <details> blocks around the offset, innermost last
+        for pos, kind, summary in blocks[: bisect.bisect_right(blocks, (offset, "~", "~"))]:
+            if pos < roles[i][0]:
+                continue
+            if kind == "open":
+                stack.append(summary)
+            elif stack:
+                stack.pop()
+        if not stack or "thought" in stack[-1]:
+            return Origin.ASSISTANT  # the model's own text, or its thought process
+        return Origin.TOOL
 
     def session_for(self, path: Path, state: dict) -> str:
         return path.stem
