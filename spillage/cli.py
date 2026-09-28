@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import sys
 import time
@@ -92,6 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
     hook = sub.add_parser("hook")  # called by the agent, not by you
     hook.add_argument("event", choices=["prompt", "tool", "session-end"])
 
+    repo = sub.add_parser("repo", help="find agent transcripts committed to a git repo, and secrets in them")
+    repo.add_argument("path", nargs="?", default=".", type=Path, help="the repository (default: here)")
+    repo.add_argument("--files", nargs="*", metavar="FILE", help="only these files (what pre-commit passes)")
+    repo.add_argument("--all-files", action="store_true", help="scan every tracked file, not just transcripts")
+    repo.add_argument("--strict", action="store_true", help="fail on any committed transcript, even a clean one")
+    repo.add_argument("-f", "--format", choices=["text", "json", "markdown", "github"], default="text",
+                      help="github: annotations plus a job summary, for Actions")
+    repo.add_argument("--no-color", action="store_true", help="plain output")
+
     sub.add_parser("agents", help="show which agents' logs were found and where")
     sub.add_parser("rules", help="list the detection rules")
 
@@ -104,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    commands = {"scan", "scrub", "check", "guard", "hook", "agents", "rules", "ignore"}
+    commands = {"scan", "scrub", "check", "guard", "hook", "repo", "agents", "rules", "ignore"}
     if not argv or (argv[0] not in commands and argv[0] not in ("-h", "--help", "-V", "--version")):
         argv = ["scan"] + argv
     args = parser.parse_args(argv)
@@ -113,6 +124,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "scan": cmd_scan,
             "scrub": cmd_scrub,
             "guard": cmd_guard,
+            "repo": cmd_repo,
             "hook": lambda a: guard.run_hook(a.event),
             "check": cmd_check,
             "agents": cmd_agents,
@@ -244,6 +256,91 @@ def cmd_guard(args: argparse.Namespace) -> int:
     if args.action == "status":
         return EXIT_CLEAN if all_on else EXIT_FOUND
     return EXIT_CLEAN
+
+
+def cmd_repo(args: argparse.Namespace) -> int:
+    from .repo import scan_repo
+
+    root = args.path.resolve()
+    result = scan_repo(root, files=args.files, all_files=args.all_files, ignore=load_ignore())
+    findings = result.findings
+    failed = bool(findings) or (args.strict and bool(result.transcripts))
+    rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
+
+    if args.format == "json":
+        data = result.scan.to_dict() if result.scan else {}
+        data["transcripts"] = result.transcripts
+        for f in data.get("findings", []):
+            for loc in f["locations"]:
+                loc["file"] = rel(loc["file"])
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return EXIT_FOUND if failed else EXIT_CLEAN
+
+    if args.format in ("markdown", "github"):
+        md = _repo_markdown(result, rel)
+        if args.format == "markdown":
+            print(md)
+        else:
+            for f in findings:
+                for loc in f.locations:
+                    line = f",line={loc.line}" if loc.line else ""
+                    rotate = f" Rotate it: {f.rotate_url}" if f.rotate_url else ""
+                    print(f"::error file={rel(loc.file)}{line},title=spillage: {f.rule_name}::"
+                          f"{f.rule_name} ({f.masked}, {f.fingerprint}) is in a committed agent transcript.{rotate}")
+            if args.strict:
+                for path, agent in result.transcripts.items():
+                    print(f"::warning file={path},title=spillage: agent transcript::"
+                          f"{agent_label(agent)} transcript is committed. Add it to .gitignore.")
+            summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary:
+                with open(summary, "a", encoding="utf-8") as fh:
+                    fh.write(md + "\n")
+            print(f"spillage: {len(result.transcripts)} transcript(s), {len(findings)} secret(s)")
+        return EXIT_FOUND if failed else EXIT_CLEAN
+
+    p = Painter(not args.no_color and supports_color(sys.stdout))
+    print()
+    print(f"  {p('spillage repo', 'bold')} {p(short_path(str(root)), 'dim')}")
+    print()
+    if not result.transcripts:
+        print(f"  {p('✓', 'green', 'bold')} No agent transcripts committed here.")
+    else:
+        n = len(result.transcripts)
+        headline = f"{n} agent transcript" + ("s are" if n != 1 else " is") + " committed"
+        print(f"  {p('●', 'yellow')} {p(headline, 'bold')}"
+              f" {p('(anyone who can read the repo can read the conversation)', 'dim')}")
+        for path, agent in sorted(result.transcripts.items())[:20]:
+            print(f"      {path}  {p(agent_label(agent), 'dim')}")
+        if n > 20:
+            print(p(f"      … and {n - 20} more", "dim"))
+    if result.scan and (findings or args.all_files):
+        print(render(result.scan, "text", color=p.color, repo=True))
+    elif result.transcripts:
+        print(f"\n  {p('✓', 'green')} No secrets in them. Consider adding them to .gitignore anyway.\n")
+    else:
+        print()
+    return EXIT_FOUND if failed else EXIT_CLEAN
+
+
+def _repo_markdown(result, rel) -> str:
+    out = ["## spillage", ""]
+    if not result.transcripts and not result.findings:
+        return "\n".join(out + ["No agent transcripts committed. ✅"])
+    if result.transcripts:
+        out += [f"**{len(result.transcripts)} agent transcript(s) committed:**", ""]
+        out += [f"- `{path}` ({agent_label(agent)})" for path, agent in sorted(result.transcripts.items())[:50]]
+        out.append("")
+    if result.findings:
+        out += ["| Severity | What | Masked | Where | Rotate |", "| --- | --- | --- | --- | --- |"]
+        for f in result.findings:
+            loc = f.locations[0]
+            where = f"`{rel(loc.file)}:{loc.line}`" + (f" +{len(f.locations) - 1}" if len(f.locations) > 1 else "")
+            rotate = f"[rotate]({f.rotate_url})" if f.rotate_url else ""
+            out.append(f"| {f.severity.label} | {f.rule_name} | `{f.masked}` | {where} | {rotate} |")
+        out += ["", "Rotate these keys: the repo history keeps them even after the file is deleted."]
+    else:
+        out.append("No secrets in them.")
+    return "\n".join(out)
 
 
 def cmd_check(args: argparse.Namespace) -> int:

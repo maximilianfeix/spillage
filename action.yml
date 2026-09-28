@@ -1,0 +1,63 @@
+name: spillage
+description: Find agent transcripts (SpecStory, Aider, Claude Code, Codex...) committed to the repo, and the API keys inside them
+author: maximilianfeix
+branding:
+  icon: droplet
+  color: red
+
+inputs:
+  path:
+    description: Repository folder to check
+    default: "."
+  strict:
+    description: Fail on any committed agent transcript, not only on ones with secrets in them
+    default: "false"
+  all-files:
+    description: Scan every tracked file for secrets, not just agent transcripts
+    default: "false"
+
+outputs:
+  transcripts:
+    description: Number of committed agent transcripts
+    value: ${{ steps.run.outputs.transcripts }}
+  secrets:
+    description: Number of distinct secrets found
+    value: ${{ steps.run.outputs.secrets }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install spillage
+      shell: bash
+      run: |
+        base=$(command -v python3 || command -v python)
+        "$base" -m venv "$RUNNER_TEMP/spillage-venv"
+        py="$RUNNER_TEMP/spillage-venv/bin/python"
+        [ -x "$py" ] || py="$RUNNER_TEMP/spillage-venv/Scripts/python.exe"
+        "$py" -m pip install --quiet --disable-pip-version-check "${{ github.action_path }}"
+        echo "SPILLAGE_PY=$py" >> "$GITHUB_ENV"
+    - id: run
+      name: Check the repository
+      shell: bash
+      env:
+        SPILLAGE_PATH: ${{ inputs.path }}
+        SPILLAGE_STRICT: ${{ inputs.strict }}
+        SPILLAGE_ALL: ${{ inputs.all-files }}
+      run: |
+        args=(repo "$SPILLAGE_PATH" --format github)
+        [ "$SPILLAGE_STRICT" = "true" ] && args+=(--strict)
+        [ "$SPILLAGE_ALL" = "true" ] && args+=(--all-files)
+        set +e
+        "$SPILLAGE_PY" -m spillage "${args[@]}"
+        code=$?
+        set -e
+        json=(repo "$SPILLAGE_PATH" --format json)
+        [ "$SPILLAGE_ALL" = "true" ] && json+=(--all-files)
+        "$SPILLAGE_PY" -m spillage "${json[@]}" > "$RUNNER_TEMP/spillage.json" || true
+        "$SPILLAGE_PY" - "$RUNNER_TEMP/spillage.json" >> "$GITHUB_OUTPUT" <<'PY'
+        import json, sys
+        d = json.load(open(sys.argv[1]))
+        print(f"transcripts={len(d.get('transcripts', {}))}")
+        print(f"secrets={d.get('summary', {}).get('findings', 0)}")
+        PY
+        exit $code

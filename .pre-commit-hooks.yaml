@@ -1,0 +1,15 @@
+# Secrets in agent transcripts (SpecStory, Aider, Claude Code, Codex...) that are about to be committed.
+- id: spillage
+  name: spillage (secrets in agent transcripts)
+  entry: spillage repo --files
+  language: python
+  pass_filenames: true
+  files: (^|/)(\.specstory/history/.*\.md|\.aider\.(chat|input)\.history(\.md)?|\.claude/.*\.jsonl|.*rollout-.*\.jsonl|\.gemini/.*/chats/.*\.json|\.continue/sessions/.*\.json)$
+
+# Stricter: don't let agent transcripts into the repo at all, secrets or not.
+- id: no-agent-transcripts
+  name: no agent transcripts in git
+  entry: spillage repo --strict --files
+  language: python
+  pass_filenames: true
+  files: (^|/)(\.specstory/history/.*\.md|\.aider\.(chat|input)\.history(\.md)?|\.claude/.*\.jsonl|.*rollout-.*\.jsonl|\.gemini/.*/chats/.*\.json|\.continue/sessions/.*\.json)$

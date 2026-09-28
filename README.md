@@ -18,7 +18,7 @@
 <a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
 <a href="#what-it-finds"><img src="https://img.shields.io/badge/40_rules-0E0F13?style=for-the-badge" alt="40 rules"></a>
 
-[Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [How it works](#how-it-works) · [FAQ](#faq)
+[Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [How it works](#how-it-works) · [FAQ](#faq)
 
 </div>
 
@@ -47,6 +47,7 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 - [Commands](#commands) · [Reports](#reports)
 - [Scrub](#scrub)
 - [Guard](#guard)
+- [Committed transcripts](#repo): GitHub Action, pre-commit
 - [How it works](#how-it-works)
 - [From Python](#from-python)
 - [FAQ](#faq)
@@ -129,6 +130,7 @@ spillage scan --min-severity high skip the low and medium stuff
 spillage scan -v                  every place a secret was seen, not just the first
 spillage scrub                    remove what it found from the logs (asks first)
 spillage guard install            agent hooks that block the next leak
+spillage repo                     agent transcripts committed to this git repo, and secrets in them
 spillage check "some text"        scan a string, or stdin: pbpaste | spillage check
 spillage ignore <fingerprint>     stop reporting a secret (a test key, say)
 spillage agents                   which agents were found, and where
@@ -197,6 +199,47 @@ The config goes where each agent expects it: `~/.claude/settings.json`, `~/.code
 
 > [!NOTE]
 > Codex runs new hooks only after you've trusted them once: open Codex and run `/hooks`. Claude Code and Codex were tested end to end with their real CLIs; Gemini CLI follows its documented hook format.
+
+<a id="repo"></a>
+
+## Committed transcripts
+
+Some agents write their chat logs into the project, and from there they get committed. GitHub's code search finds about **16,000 SpecStory chat logs** and **5,000 Aider histories** in public repositories (September 2026). Once a key is in a pushed repo, it's not a local problem anymore.
+
+```bash
+spillage repo                 # this repository
+spillage repo --strict        # also fail on transcripts without secrets in them
+spillage repo --all-files     # scan every tracked file, not just transcripts
+```
+
+### GitHub Action
+
+```yaml
+# .github/workflows/spillage.yml
+on: [push, pull_request]
+jobs:
+  spillage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maximilianfeix/spillage@v0.3.0
+        with:
+          strict: true   # fail on any committed transcript
+```
+
+Each secret becomes an error annotation on the file and line, and the job summary gets a table with rotate links. Outputs: `transcripts` and `secrets` (counts).
+
+### pre-commit
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/maximilianfeix/spillage
+    rev: v0.3.0
+    hooks:
+      - id: spillage               # block transcripts that contain secrets
+      # - id: no-agent-transcripts # or block agent transcripts altogether
+```
 
 <a id="how-it-works"></a>
 

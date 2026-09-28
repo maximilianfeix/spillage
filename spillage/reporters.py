@@ -59,7 +59,7 @@ def render_json(result: ScanResult, **_) -> str:
 
 
 @reporter("text")
-def render_text(result: ScanResult, color: bool = False, verbose: bool = False, **_) -> str:
+def render_text(result: ScanResult, color: bool = False, verbose: bool = False, repo: bool = False, **_) -> str:
     p = Painter(color)
     w = width()
     out = []
@@ -100,6 +100,16 @@ def render_text(result: ScanResult, color: bool = False, verbose: bool = False, 
         out.extend(_finding_block(f, p, verbose))
 
     out.append("")
+    if repo:
+        out.append(p("  Next steps", "bold"))
+        out.append(f"    1. {p('Rotate these keys.', 'bold')} If the repo was ever pushed, assume they're public. "
+                   "Deleting the file")
+        out.append("       doesn't remove them from git history.")
+        out.append(f"    2. Add the transcripts to {p('.gitignore', 'cyan')}, e.g. {p('.specstory/', 'cyan')} and "
+                   f"{p('.aider*', 'cyan')}")
+        out.append(f"    3. {p('pre-commit', 'cyan')}: the spillage hook stops the next one, see the README")
+        out.append("")
+        return "\n".join(out)
     out.append(p("  Next steps", "bold"))
     out.append(f"    1. {p('Rotate these keys.', 'bold')} They were sent to the model provider when the "
                f"conversation happened;")
