@@ -48,7 +48,7 @@ def _date(stamp: str) -> str:
 
 
 def _how(finding: Finding) -> str:
-    order = [Origin.PROMPT, Origin.TOOL, Origin.ASSISTANT, Origin.FILE, Origin.HISTORY, Origin.OTHER]
+    order = [Origin.PROMPT, Origin.TOOL, Origin.ASSISTANT, Origin.FILE, Origin.HISTORY, Origin.CONFIG, Origin.OTHER]
     origins = [o for o in order if o in finding.origins]
     return ", ".join(Origin.DESCRIPTIONS[o] for o in origins)
 

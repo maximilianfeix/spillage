@@ -112,11 +112,12 @@ def test_clean_repo(tmp_path, home, capsys):
 def test_precommit_regex_matches_the_code():
     from pathlib import Path
 
-    from spillage.repo import TRANSCRIPT_REGEX
+    from spillage.repo import HOOK_REGEX, TRANSCRIPT_REGEX
 
     text = (Path(__file__).parent.parent / ".pre-commit-hooks.yaml").read_text()
-    expected = "  files: '" + TRANSCRIPT_REGEX.replace("'", "''") + "'"
-    assert text.count(expected) == 2
+    hooks = text.split("\n- id: ")
+    assert "  files: '" + HOOK_REGEX.replace("'", "''") + "'" in hooks[1]  # spillage: transcripts + settings
+    assert "  files: '" + TRANSCRIPT_REGEX.replace("'", "''") + "'" in hooks[2]  # no-agent-transcripts
 
 
 @pytest.mark.parametrize("path", [
@@ -187,3 +188,34 @@ def test_strict_explains_itself(repo, capsys, monkeypatch):
     monkeypatch.chdir(root)
     assert main(["repo", "--strict", "--files", ".aider.chat.history.md", "--no-color"]) == 1
     assert "--strict" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("path,hit", [
+    (".mcp.json", True), ("packages/api/.mcp.json", True), (".claude/settings.json", True),
+    (".claude/settings.local.json", True), (".cursor/mcp.json", True), (".vscode/mcp.json", True),
+    ("opencode.json", True), ("docs/mcp.json", False), (".claude/settings.yaml", False),
+])
+def test_settings_patterns(path, hit):
+    from spillage.repo import is_settings
+
+    assert is_settings(path) is hit
+
+
+def test_committed_mcp_json_is_scanned_but_not_a_transcript(tmp_path, home):
+    root = tmp_path / "tool"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    gh = fakes.github()
+    (root / ".mcp.json").write_text(json.dumps({"mcpServers": {"gh": {"env": {"GITHUB_TOKEN": gh}}}}), encoding="utf-8")
+    (root / ".claude").mkdir()
+    (root / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(npm test)"]}}),
+                                                     encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    result = scan_repo(root)
+    assert result.transcripts == {}
+    assert [f.secret for f in result.findings] == [gh]
+    assert result.findings[0].locations[0].origin == "config"
+    # a clean committed settings file is fine, even with --strict
+    (root / ".mcp.json").write_text(json.dumps({"mcpServers": {"gh": {"env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}}}}),
+                                    encoding="utf-8")
+    assert main(["repo", "--strict", str(root)]) == 0

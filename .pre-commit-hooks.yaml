@@ -1,10 +1,11 @@
-# Secrets in agent transcripts (SpecStory, Aider, Claude Code, Codex...) that are about to be committed.
+# Secrets in agent transcripts (SpecStory, Aider, Claude Code, Codex...) and agent settings (.mcp.json,
+# .claude/settings.json, ...) that are about to be committed.
 - id: spillage
-  name: spillage (secrets in agent transcripts)
+  name: spillage (secrets in agent transcripts and settings)
   entry: spillage repo --files
   language: python
   pass_filenames: true
-  files: '((^|/)\.specstory/history/[^/]+\.md$)|((^|/)\.aider\.chat\.history\.md$)|((^|/)\.aider\.input\.history$)|((^|/)\.claude/.+\.jsonl$)|((^|/)\.codex/.+\.jsonl$)|((^|/)rollout-\d{4}-\d\d-\d\dT[\d-]+-[0-9a-f-]+\.jsonl$)|((^|/)\.gemini/(.+/)?chats/[^/]+\.json$)|((^|/)\.continue/sessions/[^/]+\.json$)|((^|/)api_conversation_history\.json$)|((^|/)cline_task_[a-z]{3}-\d{1,2}-\d{4}[^/]*\.md$)'
+  files: '((^|/)\.specstory/history/[^/]+\.md$)|((^|/)\.aider\.chat\.history\.md$)|((^|/)\.aider\.input\.history$)|((^|/)\.claude/.+\.jsonl$)|((^|/)\.codex/.+\.jsonl$)|((^|/)rollout-\d{4}-\d\d-\d\dT[\d-]+-[0-9a-f-]+\.jsonl$)|((^|/)\.gemini/(.+/)?chats/[^/]+\.json$)|((^|/)\.continue/sessions/[^/]+\.json$)|((^|/)api_conversation_history\.json$)|((^|/)cline_task_[a-z]{3}-\d{1,2}-\d{4}[^/]*\.md$)|((^|/)\.mcp\.json$)|((^|/)\.claude/settings(\.local)?\.json$)|((^|/)\.(cursor|vscode)/mcp\.json$)|((^|/)\.(gemini|qwen)/settings\.json$)|((^|/)(opencode\.jsonc?|\.crush\.json|claude_desktop_config\.json)$)'
 
 # Stricter: don't let agent transcripts into the repo at all, secrets or not.
 - id: no-agent-transcripts

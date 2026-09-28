@@ -35,6 +35,7 @@ class Origin:
     ASSISTANT = "assistant"  # the model wrote it back
     FILE = "file-snapshot"  # a backup copy of a file the agent edited
     HISTORY = "history"  # the prompt history file
+    CONFIG = "config"  # an agent's settings: an MCP server's env, an allowed command
     OTHER = "other"
 
     DESCRIPTIONS = {
@@ -43,6 +44,7 @@ class Origin:
         ASSISTANT: "the model repeated it in an answer",
         FILE: "a file backup the agent keeps",
         HISTORY: "your prompt history",
+        CONFIG: "saved in an agent's settings (an MCP server, an allowed command)",
         OTHER: "session metadata",
     }
 
