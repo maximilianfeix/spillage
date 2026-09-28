@@ -243,6 +243,17 @@ class AnchoredRule(Rule):
                 pos = text.find(anchor, pos + 1)
 
 
+def _case_variants(first: str, rests: Sequence[str]) -> tuple:
+    """Every usual spelling of a two-word name: aws_secret, AWS_SECRET, AwsSecret, AWSSecret…"""
+    out = set()
+    for a in (first, first.upper(), first.capitalize()):
+        for rest in rests:
+            sep, word = (rest[0], rest[1:]) if rest[0] in "_-" else ("", rest)
+            for b in (word, word.upper(), word.capitalize()):
+                out.add(a + sep + b)
+    return tuple(sorted(out))
+
+
 _KEY_WORDS = ("key", "secret", "token", "password", "passwd", "pwd", "bearer")
 _KEY_PREFIXES = (
     "api", "secret", "private", "access", "auth", "refresh", "client", "app", "master",
@@ -439,11 +450,11 @@ BUILTIN_RULES: list = [
     ),
     AnchoredRule(
         "aws-secret-access-key", "AWS secret access key", "AWS",
-        r"(?:aws|AWS|Aws)[_-]?(?:secret|SECRET|Secret)[_-]?(?:(?:access|ACCESS|Access)[_-]?)?(?:key|KEY|Key)"
+        r"(?i:aws[_-]?secret[_-]?(?:access[_-]?)?key)"
         r"(?:\\?[\"'])?\s{0,3}[:=]\s{0,3}(?:\\?[\"'])?([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+])",
         Severity.CRITICAL, (), "https://console.aws.amazon.com/iam/home#/security_credentials",
         group=1, min_entropy=4.0, check_placeholder=True, boundary=False,
-        anchors=("aws_secret", "AWS_SECRET", "awsSecret", "AwsSecret", "aws-secret", "awssecret"),
+        anchors=_case_variants("aws", ("secret", "_secret", "-secret")),
     ),
     Rule(
         "digitalocean-token", "DigitalOcean token", "DigitalOcean",
@@ -552,7 +563,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "sentry-token", "Sentry auth token", "Sentry",
-        r"(sntr[ysu]_[A-Za-z0-9+/=_\-]{40,})" + _E,
+        r"(sntry[su]_[A-Za-z0-9+/=_\-]{40,})" + _E,
         Severity.MEDIUM, ("sntrys_", "sntryu_"), "https://sentry.io/settings/account/api/auth-tokens/", group=1,
     ),
     Rule(
@@ -581,7 +592,7 @@ BUILTIN_RULES: list = [
         r"(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----"
         r"(?:[\s\S]{40,12000}?)-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----)",
         Severity.CRITICAL, ("PRIVATE KEY",), "", group=1,
-        validator=lambda s: shannon_entropy(s) > 4.5 and not looks_like_placeholder(s[40:-40]),
+        validator=lambda s: shannon_entropy(s) > 4.5 and not _placeholder_body(s),
     ),
     AnchoredRule(
         "database-url", "Database URL with password", "Database",
@@ -602,6 +613,13 @@ BUILTIN_RULES: list = [
         validator=lambda s: not s.startswith(("sk-ant-", "ghp_", "eyJ")) and _mixed(s),
     ),
 ]
+
+
+def _placeholder_body(pem: str) -> bool:
+    """A PEM whose body is dots, x's or a short made-up string. Deliberately not the word list
+    used elsewhere: a real key's random base64 contains "todo" or "fake" now and then."""
+    body = re.sub(r"-----[^-]+-----|\s|\\n", "", pem)
+    return len(body) < 64 or "..." in body or "…" in body or len(set(body)) < 20
 
 
 def _discord_id_ok(token: str) -> bool:
@@ -661,12 +679,22 @@ _BY_ID = {r.id: r for r in BUILTIN_RULES}
 def rule_spec(rules: Sequence[Rule]) -> tuple:
     """A picklable description of a rule list, for worker processes."""
     return tuple(
-        ("env-value", tuple(r.values.items())) if isinstance(r, KnownValueRule) else r.id for r in rules
+        ("env-value", tuple(r.values.items())) if isinstance(r, KnownValueRule)
+        else r.id if _BY_ID.get(r.id) is r else r
+        for r in rules
     )
 
 
 def rules_from_spec(spec: tuple) -> list:
-    return [KnownValueRule(dict(item[1])) if isinstance(item, tuple) else _BY_ID[item] for item in spec]
+    out = []
+    for item in spec:
+        if isinstance(item, tuple):
+            out.append(KnownValueRule(dict(item[1])))
+        elif isinstance(item, Rule):
+            out.append(item)  # a custom rule, pickled as is
+        else:
+            out.append(_BY_ID[item])
+    return out
 
 
 def with_known_values(rules: Sequence[Rule], values: Dict[str, str]) -> list:

@@ -7,6 +7,7 @@ tuples and the parent merges them into one Finding per distinct secret.
 from __future__ import annotations
 
 import os
+import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .models import Finding, Location, Severity, fingerprint
 from .rules import Match, Rule, get_rules, rule_spec, rules_from_spec
-from .sources import Source
+from .sources import MAX_FILE_BYTES, Source
 
 ProgressFn = Callable[[int, int, str], None]  # jobs done, jobs total, current agent
 
@@ -107,7 +108,8 @@ def read_part(path: Path, part: int, parts: int) -> Tuple[str, int, str]:
         start, end = cut(size * part // parts), cut(size * (part + 1) // parts)
         fh.seek(start)
         data = fh.read(end - start)
-    return data.decode("utf-8", errors="replace"), start, first.decode("utf-8", errors="replace")
+    # same decoding as Source.load / read_text_exact, so fingerprints don't depend on splitting
+    return data.decode("utf-8", errors="surrogateescape"), start, first.decode("utf-8", errors="surrogateescape")
 
 
 def _lines_before(path: Path, offset: int) -> int:
@@ -128,7 +130,7 @@ def scan_file(source: Source, path: Path, rules: Sequence[Rule], part: int = 0, 
         doc = source.document(path, text)
         doc.first_line = first_line
         if byte_start:
-            doc.line_offset = _lines_before(path, byte_start)
+            doc.line_offset = lambda: _lines_before(path, byte_start)  # only counted if this part has a hit
     else:
         loaded = source.load(path)
         if not loaded:
@@ -214,13 +216,21 @@ class Scanner:
 
     def _run(self, jobs: List[Tuple[Source, Path, int]], stats: ScanStats) -> List[Hit]:
         workers = self.workers if self.workers is not None else min(8, os.cpu_count() or 1)
-        parallel = workers > 1 and stats.bytes >= PARALLEL_THRESHOLD and len(jobs) >= 2
+        parallel = workers > 1 and stats.bytes >= PARALLEL_THRESHOLD and bool(jobs)
+        if parallel:
+            try:
+                pickle.dumps(rule_spec(self.rules))
+            except Exception:  # custom rules with lambdas: run them here instead
+                parallel = False
         units: List[Job] = []
         # Biggest first, so the long jobs start early and the small ones fill the gaps.
         for source, path, size in sorted(jobs, key=lambda j: -j[2]):
             parts = 1
-            if parallel and path.suffix == ".jsonl" and size > SPLIT_BYTES:
-                parts = min(64, -(-size // SPLIT_BYTES))
+            if path.suffix == ".jsonl" and (size > MAX_FILE_BYTES or (parallel and size > SPLIT_BYTES)):
+                # huge files are always read in parts, even without a pool
+                parts = max(-(-size // (MAX_FILE_BYTES // 2)), min(64, -(-size // SPLIT_BYTES)) if parallel else 1)
+            elif size > MAX_FILE_BYTES and type(source).load is Source.load:  # SQLite readers have no limit
+                stats.errors.append(f"{path}: skipped, larger than {MAX_FILE_BYTES // 2**20} MB")
             units.extend((source, path, i, parts) for i in range(parts))
         total = len(units)
         hits: List[Hit] = []
@@ -242,6 +252,7 @@ class Scanner:
 
     def _merge(self, hits: List[Hit], stats: ScanStats) -> List[Finding]:
         rules = {r.id: r for r in self.rules}
+        order = {r.id: i for i, r in enumerate(self.rules)}
         found: Dict[str, Finding] = {}
         ignored = set()
         for rule_id, secret, location in hits:
@@ -250,6 +261,11 @@ class Scanner:
                 ignored.add(fp)
                 continue
             finding = found.get(fp)
+            if finding is not None and order[rule_id] < order[finding.rule_id]:
+                # a more specific rule saw it too: "AWS secret key" beats "Value of AWS_SECRET"
+                rule = rules[rule_id]
+                finding.rule_id, finding.rule_name, finding.provider = rule.id, rule.name_for(secret), rule.provider
+                finding.severity, finding.rotate_url = rule.severity_for(secret), rule.rotate_url
             if finding is None:
                 rule = rules[rule_id]
                 finding = found[fp] = Finding(
