@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.9] - 2026-09-28
+
+### Fixed
+- a scan crashed when an old session had run in a folder that's now unreadable, or when the current folder had been deleted
+- project folders are found through the same Claude Code and Codex locations the scan uses, so `CLAUDE_CONFIG_DIR` next to `~/.claude` and archived Codex sessions count too; the list is computed once instead of per source
+- SpecStory: the model's "Thought Process" blocks count as the model, not as tool output, and origins are looked up with an index instead of rescanning the file per match
+- the test suite no longer scans the real working directory
+
 ## [0.6.8] - 2026-09-28
 
 ### Fixed

@@ -478,10 +478,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
         files = list(source.discover())
         size = sum(f.stat().st_size for f in files if f.exists())
         mark = p("●", "green") if files else p("○", "gray")
-        dirs = source.roots()
-        roots = ", ".join(short_path(str(r)) for r in dirs[:3])
-        if len(dirs) > 3:
-            roots = f"{len(dirs)} project folders (this one and the ones your agent sessions ran in)"
+        roots = source.describe_roots(source.roots())
         detail = f"{len(files)} files, {size / 1e6:.1f} MB" if files else p("not found", "dim")
         print(f"  {mark} {p(f'{cls.name:<9}', 'bold')} {cls.label:<20} {detail}")
         print(f"    {p(roots, 'dim')}")
