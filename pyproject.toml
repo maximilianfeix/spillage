@@ -49,6 +49,9 @@ version = { attr = "spillage.__version__" }
 [tool.setuptools.packages.find]
 include = ["spillage*"]
 
+[tool.setuptools.package-data]
+spillage = ["assets/*"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py39"

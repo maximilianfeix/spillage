@@ -16,6 +16,7 @@ No dependencies, no network, nothing leaves your machine. Secrets are only ever 
 ```
 spillage                  scan every agent it knows (same as `spillage scan`)
 spillage scan --since 7d  only recent logs
+spillage scan -f html -o report.html   a report to open in the browser
 spillage scan -f json     machine readable, also markdown
 spillage scrub            remove what it found from the logs (asks first)
 spillage guard install    Claude Code hooks that block the next leak

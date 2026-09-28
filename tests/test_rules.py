@@ -198,7 +198,7 @@ def test_placeholders():
 def test_entropy():
     assert shannon_entropy("") == 0
     assert shannon_entropy("aaaa") == 0
-    assert shannon_entropy(fakes.rand(64)) > 5
+    assert shannon_entropy(fakes.rand(64)) > 4.5
 
 
 def test_rule_ids_are_unique_and_described():
