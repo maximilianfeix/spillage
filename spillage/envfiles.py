@@ -14,9 +14,12 @@ from typing import Dict, Iterable, List
 from .rules import looks_like_placeholder, shannon_entropy
 from .term import short_path
 
-SECRET_NAME = re.compile(
-    r"(KEY|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL|AUTH|PRIVATE|DSN|DATABASE_URL|CONN|WEBHOOK)", re.I
-)
+# Whole words of the variable name (split on _ - . and camelCase): AUTHOR or BYPASS don't count.
+SECRET_WORDS = {
+    "KEY", "APIKEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASS", "PWD", "CREDENTIAL", "CREDENTIALS",
+    "AUTH", "DSN", "WEBHOOK", "PRIVATE", "CONNECTION", "CONN",
+}
+PUBLIC_WORDS = {"PUBLIC", "PUBLISHABLE", "ANON"}  # meant to ship to browsers
 ENV_GLOBS = (".env", ".env.*", "*.env")
 TEMPLATES = ("*.example", "*.sample", "*.template", "*.dist", "*.defaults", ".env.*.example")
 MIN_LENGTH = 10
@@ -43,6 +46,29 @@ def _subdirs(project: Path) -> List[Path]:
         return []
 
 
+def name_words(name: str) -> set:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return {w.upper() for w in re.split(r"[_.\-]+", spaced) if w}
+
+
+def is_secret_name(name: str) -> bool:
+    words = name_words(name)
+    if words & PUBLIC_WORDS:
+        return False
+    return bool(words & SECRET_WORDS) or name.upper() in ("DATABASE_URL", "REDIS_URL", "MONGODB_URI", "MONGO_URL")
+
+
+def _value(raw: str) -> str:
+    """The value part of a line: quotes removed, a trailing comment cut off. An opening quote
+    that doesn't close on the same line (a multi-line PEM, say) gives an empty value."""
+    if raw[:1] in "\"'":
+        end = raw.find(raw[0], 1)
+        return raw[1:end] if end != -1 else ""
+    if " #" in raw:
+        raw = raw.split(" #", 1)[0]
+    return raw.strip()
+
+
 def parse(text: str) -> Dict[str, str]:
     """NAME -> value for the lines that look like secrets."""
     out: Dict[str, str] = {}
@@ -50,19 +76,22 @@ def parse(text: str) -> Dict[str, str]:
         m = LINE.match(raw)
         if not m or raw.lstrip().startswith("#"):
             continue
-        name, value = m.group(1), m.group(2)
-        if value[:1] in "\"'" and value.endswith(value[:1]) and len(value) >= 2:
-            value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
-        if not SECRET_NAME.search(name) or len(value) < MIN_LENGTH:
+        name, value = m.group(1), _value(m.group(2))
+        if not is_secret_name(name) or len(value) < MIN_LENGTH:
             continue
-        if looks_like_placeholder(value) or shannon_entropy(value) < 3.0 or "\n" in value:
+        if looks_like_placeholder(value) or shannon_entropy(value) < 3.0 or value.startswith("-----"):
             continue
-        if value.lower().startswith(("http://localhost", "http://127.0.0.1")):
-            continue
+        if re.match(r"^[a-z][a-z0-9+.-]*://", value, re.I) and "@" not in value:
+            continue  # a plain URL, no credentials in it
         out[name] = value
     return out
+
+
+def rules_with_env(rules, projects: Iterable[Path]) -> list:
+    """`rules` plus the values from the .env files in `projects`."""
+    from .rules import with_known_values
+
+    return with_known_values(rules, collect(projects))
 
 
 def collect(projects: Iterable[Path], limit: int = 2000) -> Dict[str, str]:

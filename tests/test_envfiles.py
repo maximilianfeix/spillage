@@ -117,3 +117,57 @@ def test_collect_labels(tmp_path):
     (tmp_path / ".env").write_text(f"API_SECRET={fakes.rand(30)}\n")
     ((_, label),) = collect([tmp_path]).items()
     assert label.startswith("API_SECRET from ")
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("AUTHOR_NAME=Maximilian Feix", None),
+    ("NEXTAUTH_URL=https://shop-app.vercel.app", None),
+    ("NEXT_PUBLIC_FIREBASE_API_KEY=AIzaXk3pQ9zLm2abcdefgh", None),
+    ("BYPASS_MODE=enabledeverywhere1", None),
+    ('DB_PASSWORD="Xk3!pQ9zLm2" # prod', "Xk3!pQ9zLm2"),
+    ('PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----', None),
+    ("DATABASE_URL=postgres://app:Xk3pQ9zLm2w@db:5432/x", "postgres://app:Xk3pQ9zLm2w@db:5432/x"),
+    ("stripeSecretKey=Xk3pQ9zLm2wQ7r", "Xk3pQ9zLm2wQ7r"),
+])
+def test_parse_edge_cases(line, expected):
+    got = parse(line)
+    assert (next(iter(got.values())) if got else None) == expected
+
+
+def test_value_ending_in_backslash_redacts_to_valid_json():
+    from spillage.models import fingerprint
+    from spillage.scrub import redact_text
+
+    value = "abcdefgh1Q\\"
+    rule = KnownValueRule({value: "X"})
+    line = json.dumps({"content": f"pw {value}"})
+    new, count = redact_text(line, {fingerprint(value)}, [rule], True)
+    assert count == 1 and json.loads(new)
+
+
+def test_env_value_is_a_rule_id(project_with_env, capsys):
+    assert main(["scan", "--skip-rules", "env-value"]) == 0
+    assert main(["scan", "--rules", "env-value"]) == 1
+    capsys.readouterr()
+    assert main(["rules"]) == 0
+    assert "env-value" in capsys.readouterr().out
+
+
+def test_session_end_uses_the_projects_env(project_with_env, home):
+    from spillage import guard
+
+    proj, pw = project_with_env
+    session = next(home.root.rglob("s1.jsonl"))
+    guard.handle("session-end", {"transcript_path": str(session), "cwd": str(proj)})
+    assert pw not in session.read_text()
+
+
+def test_parallel_scan_with_env_values(project_with_env, monkeypatch):
+    from spillage import scanner as scanner_mod
+    from spillage.sources import build_sources
+
+    _, pw = project_with_env
+    rules = with_known_values(get_rules(), {pw: "POSTGRES_PASSWORD"})
+    monkeypatch.setattr(scanner_mod, "PARALLEL_THRESHOLD", 0)
+    result = scanner_mod.Scanner(rules=rules, workers=2).scan(build_sources())
+    assert [f.secret for f in result.findings] == [pw]

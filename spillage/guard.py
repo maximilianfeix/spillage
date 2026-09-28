@@ -169,10 +169,14 @@ def handle(event: str, payload: dict) -> Tuple[int, str]:
     if event == "session-end":
         transcript = payload.get("transcript_path")
         if isinstance(transcript, str) and transcript.endswith((".jsonl", ".json")) and Path(transcript).is_file():
+            from .envfiles import rules_with_env
+            from .rules import get_rules
             from .scanner import load_ignore
             from .scrub import scrub_file
 
-            scrub_file(Path(transcript), ignore=load_ignore())
+            cwd = payload.get("cwd")
+            projects = [Path(cwd)] if isinstance(cwd, str) and Path(cwd).is_dir() else []
+            scrub_file(Path(transcript), ignore=load_ignore(), rules=rules_with_env(get_rules(), projects))
         return 0, ""
     raise ValueError(f"unknown hook event {event!r}")
 

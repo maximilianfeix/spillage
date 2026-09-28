@@ -148,22 +148,20 @@ def scan_file(source: Source, path: Path, rules: Sequence[Rule], part: int = 0, 
 Job = Tuple[Source, Path, int, int]
 
 
-def _scan_job(args: Tuple[Job, tuple]) -> Tuple[List[Hit], List[str], str]:
-    (source, path, part, parts), spec = args
+_WORKER_RULES: list = []
+
+
+def _init_worker(spec: tuple) -> None:
+    """Runs once per worker process: the rules (and any .env values) arrive once, not per job."""
+    _WORKER_RULES[:] = rules_from_spec(spec)
+
+
+def _scan_job(unit: Job, rules: Optional[Sequence[Rule]] = None) -> Tuple[List[Hit], List[str], str]:
+    source, path, part, parts = unit
     try:
-        return scan_file(source, path, _rules_for(spec), part, parts), [], source.name
+        return scan_file(source, path, rules if rules is not None else _WORKER_RULES, part, parts), [], source.name
     except Exception as exc:  # one broken file must not end the scan
         return [], [f"{path}: {exc}"], source.name
-
-
-_RULE_CACHE: Dict[tuple, list] = {}
-
-
-def _rules_for(spec: tuple) -> list:
-    if spec not in _RULE_CACHE:
-        _RULE_CACHE.clear()
-        _RULE_CACHE[spec] = rules_from_spec(spec)
-    return _RULE_CACHE[spec]
 
 
 class Scanner:
@@ -211,7 +209,6 @@ class Scanner:
 
     def _run(self, jobs: List[Tuple[Source, Path, int]], stats: ScanStats) -> List[Hit]:
         workers = self.workers if self.workers is not None else min(8, os.cpu_count() or 1)
-        rule_ids = rule_spec(self.rules)
         parallel = workers > 1 and stats.bytes >= PARALLEL_THRESHOLD and len(jobs) >= 2
         units: List[Job] = []
         # Biggest first, so the long jobs start early and the small ones fill the gaps.
@@ -223,10 +220,11 @@ class Scanner:
         total = len(units)
         hits: List[Hit] = []
         if not parallel:
-            results = (_scan_job((unit, rule_ids)) for unit in units)
+            results = (_scan_job(unit, self.rules) for unit in units)
             return self._collect(results, total, hits, stats)
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            results = pool.map(_scan_job, [(unit, rule_ids) for unit in units], chunksize=1)
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
+                                 initargs=(rule_spec(self.rules),)) as pool:
+            results = pool.map(_scan_job, units, chunksize=1)
             return self._collect(results, total, hits, stats)
 
     def _collect(self, results, total: int, hits: List[Hit], stats: ScanStats) -> List[Hit]:
