@@ -1,3 +1,3 @@
 """Find the secrets your coding agents spilled."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
