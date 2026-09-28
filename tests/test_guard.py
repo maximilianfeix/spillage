@@ -177,13 +177,64 @@ def test_settings_scopes(tmp_path, home):
 
 def test_cli_guard_roundtrip(home, capsys):
     assert main(["guard", "status"]) == 1
-    assert main(["guard", "install"]) == 0
-    assert "guard installed" in capsys.readouterr().out
-    assert main(["guard", "install"]) == 0
+    assert main(["guard", "install"]) == 0  # nothing installed: falls back to Claude Code
+    assert "Claude Code  guard installed" in capsys.readouterr().out
+    assert main(["guard", "install", "--agent", "claude"]) == 0
     assert "already installed" in capsys.readouterr().out
-    assert main(["guard", "status"]) == 0
+    assert main(["guard", "status", "--agent", "claude"]) == 0
     assert main(["guard", "uninstall"]) == 0
     assert "guard removed" in capsys.readouterr().out
+
+
+def test_cli_guard_installs_every_agent_it_finds(home, capsys):
+    (home.root / ".codex").mkdir()
+    (home.root / ".gemini").mkdir()
+    assert main(["guard", "install"]) == 0
+    out = capsys.readouterr().out
+    assert "Codex CLI" in out and "Gemini CLI" in out and "Claude Code" not in out
+    codex = json.loads((home.root / ".codex/hooks.json").read_text())
+    assert set(codex["hooks"]) == {"UserPromptSubmit", "PreToolUse", "SessionEnd"}
+    gemini = json.loads((home.root / ".gemini/settings.json").read_text())
+    assert set(gemini["hooks"]) == {"BeforeAgent", "BeforeTool", "SessionEnd"}
+    assert "run_shell_command" in gemini["hooks"]["BeforeTool"][0]["matcher"]
+    assert main(["guard", "status", "--agent", "codex,gemini"]) == 0
+
+
+def test_cli_guard_unknown_agent(home, capsys):
+    assert main(["guard", "install", "--agent", "cursor"]) == 2
+    assert "guard supports" in capsys.readouterr().err
+
+
+def test_gemini_keeps_its_other_settings(home):
+    path = home.root / ".gemini/settings.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"theme": "GitHub", "selectedAuthType": "oauth-personal"}))
+    guard.install(guard.settings_path(agent="gemini"), "gemini")
+    data = json.loads(path.read_text())
+    assert data["theme"] == "GitHub" and "BeforeAgent" in data["hooks"]
+    guard.uninstall(path)
+    assert json.loads(path.read_text()) == {"theme": "GitHub", "selectedAuthType": "oauth-personal"}
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("read_file", {"absolute_path": "/app/.env"}),
+    ("read_file", {"file_path": "/app/.env.local"}),
+    ("read_many_files", {"paths": ["src/a.py", ".env"]}),
+    ("run_shell_command", {"command": "cat .env"}),
+    ("search_file_content", {"pattern": "KEY", "include": "*.pem"}),
+    ("Bash", {"command": ["bash", "-lc", "printenv"]}),
+    ("mcp__filesystem__read_file", {"path": "/home/me/.aws/credentials"}),
+])
+def test_other_agents_tool_names(tool, tool_input):
+    assert guard.handle("tool", {"tool_name": tool, "tool_input": tool_input})[0] == 2
+
+
+def test_session_end_scrubs_gemini_json(home):
+    key = fakes.google()
+    path = home.gemini_chat([{"type": "user", "content": f"use {key}"}])
+    guard.handle("session-end", {"transcript_path": str(path)})
+    assert key not in path.read_text()
+    json.loads(path.read_text())
 
 
 def test_cli_hook(monkeypatch, capsys):
