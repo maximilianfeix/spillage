@@ -181,3 +181,97 @@ def test_cli_scrub_only(old_files, capsys):
 def test_cli_scrub_nothing(home, capsys):
     assert main(["scrub", "-y"]) == 0
     assert "nothing to scrub" in capsys.readouterr().out
+
+
+# ---- review fixes -------------------------------------------------------------------------
+
+def test_crlf_private_key_in_a_text_log(home):
+    pk = fakes.private_key().replace("\n", "\r\n")
+    log = home.root / ".codex/log/codex-tui.log"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(("started\r\n" + pk + "\r\ndone\r\n").encode())
+    report = scrub(scan().findings, now=LONG_AGO)
+    assert report.replacements == 1 and not report.failed
+    assert b"PRIVATE KEY-----\r\n" not in log.read_bytes() and log.read_bytes().endswith(b"\r\ndone\r\n")
+
+
+def test_symlink_target_is_scrubbed(home, tmp_path):
+    from spillage.scanner import Scanner as S
+    from spillage.sources import PathSource
+
+    real = tmp_path / "real.jsonl"
+    key = fakes.npm()
+    real.write_text(json.dumps({"content": key}) + "\n")
+    link = tmp_path / "link.jsonl"
+    try:
+        link.symlink_to(real)
+    except OSError:
+        pytest.skip("no symlinks")
+    result = S(workers=1).scan([PathSource([link])])
+    report = scrub(result.findings, now=LONG_AGO)
+    assert report.replacements == 1
+    assert link.is_symlink() and key not in real.read_text()
+
+
+def test_invalid_byte_elsewhere_in_the_file(home):
+    gh = fakes.github()
+    path = home.root / ".claude/projects/p/s.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"type":"user","message":{"content":"caf\xff"}}\n'
+                     + json.dumps({"type": "user", "message": {"content": gh}}).encode() + b"\n")
+    report = scrub(scan().findings, now=LONG_AGO)
+    assert report.replacements == 1 and not report.failed
+    raw = path.read_bytes()
+    assert b"caf\xff" in raw and gh.encode() not in raw
+
+
+def test_file_changed_since_the_scan_is_reported(leaky_home):
+    result = scan()
+    for p in leaky_home.root.rglob("*.jsonl"):
+        p.write_text('{"type":"user","message":{"content":"all gone"}}\n')
+    report = scrub(result.findings, now=LONG_AGO)
+    assert report.replacements == 0
+    assert any("didn't find it again" in why for _, why in report.failed)
+
+
+def test_signed_thinking_blocks_are_left_alone(home):
+    key = fakes.npm()
+    home.claude_session(records=[
+        {"type": "assistant", "message": {"content": [
+            {"type": "thinking", "thinking": f"the user gave {key}", "signature": "x" * 300}]}},
+        {"type": "user", "message": {"content": f"here {key}"}},
+    ])
+    report = scrub(scan().findings, now=LONG_AGO)
+    assert report.replacements == 1 and report.signed == 1
+    text = next(home.root.rglob("s1.jsonl")).read_text()
+    assert f"the user gave {key}" in text and f"here {key}" not in text
+
+
+def test_u2028_inside_a_line_is_still_validated():
+    from spillage.scrub import _still_valid
+
+    old = json.dumps({"a": "x y", "k": "v"}, ensure_ascii=False)
+    new = old.replace('"v"', '"broken')
+    assert not _still_valid(old, new, "jsonl")
+
+
+def test_ctrl_d_at_the_prompt(old_files, capsys, monkeypatch):
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("sys.stdin", Tty(""))
+    assert main(["scrub"]) == 0
+    assert "Nothing changed" in capsys.readouterr().out
+
+
+def test_session_end_scrub_skips_thinking_too(home):
+    from spillage.scrub import scrub_file
+
+    key = fakes.npm()
+    path = home.claude_session(records=[
+        {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": key, "signature": "s" * 300}]}},
+        {"type": "user", "message": {"content": key}},
+    ])
+    assert scrub_file(path) == 1
+    assert path.read_text().count(key) == 1

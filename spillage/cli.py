@@ -225,14 +225,20 @@ def cmd_scrub(args: argparse.Namespace) -> int:
         if not sys.stdin.isatty():
             print("spillage: not a terminal, pass --yes to scrub without asking", file=sys.stderr)
             return EXIT_USAGE
-        answer = input(f"  Replace them with [REDACTED:…] markers in {len(files)} files? [y/N] ")
+        try:
+            answer = input(f"  Replace them with [REDACTED:…] markers in up to {len(files)} files? [y/N] ")
+        except EOFError:
+            answer = ""
         if answer.strip().lower() not in ("y", "yes"):
             print("  Nothing changed.")
             return EXIT_CLEAN
-    report = scrub(findings, rules=build_rules(args),
+    report = scrub(findings, rules=build_rules(args), only=args.only,
                    dry_run=args.dry_run, include_active=args.include_active)
     verb = "Would redact" if args.dry_run else "Redacted"
     print(f"  {p('✓', 'green')} {verb} {report.replacements} occurrences in {len(report.files_changed)} files.")
+    if report.signed:
+        print(p(f"  left {report.signed} inside signed thinking blocks: editing those breaks `--resume` of that "
+                "session. Delete the session if that matters more.", "yellow"))
     for file in report.skipped_active:
         print(p(f"  skipped {short_path(file)}: written in the last minute, probably this session. "
                 "Run again later or pass --include-active.", "yellow"))

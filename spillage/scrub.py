@@ -21,7 +21,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from .models import Finding, fingerprint
 from .rules import Rule, get_rules
 from .scanner import find_in_text
-from .sources import decode_json_fragment
+from .sources import Source, decode_json_fragment, get_source, read_text_exact
 
 ACTIVE_SECONDS = 60
 
@@ -34,6 +34,7 @@ def marker(rule_id: str, fp: str) -> str:
 class ScrubReport:
     files_changed: List[str] = field(default_factory=list)
     replacements: int = 0
+    signed: int = 0  # left inside signed thinking blocks, see redact_text
     skipped_active: List[str] = field(default_factory=list)
     failed: List[Tuple[str, str]] = field(default_factory=list)
     dry_run: bool = False
@@ -48,8 +49,14 @@ def plan(findings: Iterable[Finding]) -> Dict[str, Set[str]]:
     return todo
 
 
-def redact_text(text: str, targets: Set[str], rules: Sequence[Rule], is_json: bool) -> Tuple[str, int]:
-    """Replace every match whose fingerprint is in `targets`. Returns (new text, count)."""
+def redact_text(
+    text: str, targets: Set[str], rules: Sequence[Rule], is_json: bool, doc=None, stats: Optional[dict] = None
+) -> Tuple[str, int]:
+    """Replace every match whose fingerprint is in `targets`. Returns (new text, count).
+
+    With a Document, matches the scan ignored (inside base64 blobs) are left alone too, and so
+    is text in a signed thinking block: the API checks those signatures on `--resume`, so an
+    edited block would break the session. Those are counted in stats["signed"]."""
     pieces = []
     last = 0
     count = 0
@@ -58,6 +65,14 @@ def redact_text(text: str, targets: Set[str], rules: Sequence[Rule], is_json: bo
         fp = fingerprint(secret)
         if fp not in targets:
             continue
+        if doc is not None:
+            location = doc.locate(match.start, secret)
+            if location is None:
+                continue
+            if _in_signed_block(location.json_path):
+                if stats is not None:
+                    stats["signed"] = stats.get("signed", 0) + 1
+                continue
         pieces.append(text[last : match.start])
         pieces.append(marker(rule.id, fp))
         last = match.end
@@ -66,10 +81,15 @@ def redact_text(text: str, targets: Set[str], rules: Sequence[Rule], is_json: bo
     return "".join(pieces), count
 
 
+def _in_signed_block(json_path: str) -> bool:
+    return json_path.endswith(".thinking") or ".thinking[" in json_path or json_path.endswith(".redacted_thinking")
+
+
 def _still_valid(original: str, redacted: str, kind: str) -> bool:
     if kind == "jsonl":
-        before = original.splitlines()
-        after = redacted.splitlines()
+        # split on \n only: str.splitlines() also breaks on U+2028, which JSON may hold raw
+        before = original.split("\n")
+        after = redacted.split("\n")
         if len(before) != len(after):
             return False
         for old, new in zip(before, after):
@@ -96,23 +116,24 @@ def _still_valid(original: str, redacted: str, kind: str) -> bool:
 
 
 def read_exact(path: Path) -> Optional[str]:
-    """Text with line endings untouched, so a rewrite changes nothing but the secrets."""
-    try:
-        with open(path, encoding="utf-8", newline="") as fh:
-            return fh.read()
-    except UnicodeDecodeError:
-        return None
+    """The same text the scanner saw, so a rewrite changes nothing but the secrets."""
+    return read_text_exact(path)
+
+
+def _encode(text: str) -> bytes:
+    return text.encode("utf-8", errors="surrogateescape")
 
 
 def write_atomic(path: Path, text: str) -> None:
     """Write via a temp file in the same folder and rename, keeping mode and timestamps.
 
     Keeping the mtime matters: agents sort their session lists by it (`claude --resume`)."""
+    path = path.resolve()  # a symlink: rewrite what it points to, keep the link
     st = path.stat()
     fd, tmp = tempfile.mkstemp(prefix=".spillage-", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(_encode(text))
         shutil.copymode(str(path), tmp)
         os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
         os.replace(tmp, str(path))
@@ -129,8 +150,9 @@ def write_in_place(path: Path, text: str) -> None:
 
     For files an agent may still hold open (Codex keeps its rollout file open for the whole
     session): after a rename its later writes would go to the old, unlinked file."""
+    path = path.resolve()
     st = path.stat()
-    data = text.encode("utf-8")
+    data = _encode(text)
     with open(path, "r+b") as fh:
         fh.write(data)
         fh.truncate(len(data))
@@ -155,11 +177,19 @@ def scrub_file(
             targets.add(fp)
     if not targets:
         return 0
-    new, count = redact_text(text, targets, rules, is_json)
+    new, count = redact_text(text, targets, rules, is_json, doc=Source().document(path, text))
     if count and _still_valid(text, new, kind):
         (write_in_place if in_place else write_atomic)(path, new)
         return count
     return 0
+
+
+def _source_for(agent: str) -> Source:
+    """The adapter that produced a finding, so the file is read the same way again."""
+    try:
+        return get_source(agent)()
+    except ValueError:
+        return Source()
 
 
 def scrub(
@@ -175,37 +205,50 @@ def scrub(
     targets = [f for f in findings if wanted is None or f.fingerprint in wanted]
     report = ScrubReport(dry_run=dry_run)
     now = time.time() if now is None else now
+    agents = {loc.file: loc.agent for f in targets for loc in f.locations}
     for file, fps in sorted(plan(targets).items()):
         path = Path(file)
-        if path.suffix == ".vscdb":
-            report.failed.append((file, "Cursor's database can't be scrubbed yet, delete the chat in Cursor instead"))
+        if path.suffix in (".vscdb", ".db"):
+            report.failed.append((file, "can't scrub a database yet, delete the chat in the agent instead"))
             continue
         try:
-            if not include_active and now - path.stat().st_mtime < ACTIVE_SECONDS:
+            before = path.stat()
+            if not include_active and now - before.st_mtime < ACTIVE_SECONDS:
                 report.skipped_active.append(file)
                 continue
-            text = read_exact(path)
         except OSError as exc:
             report.failed.append((file, str(exc)))
             continue
+        text = read_exact(path)
         if text is None:
             report.failed.append((file, "could not read it as text"))
             continue
-        kind = {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
-        new, count = redact_text(text, fps, rules, kind != "text")
+        source = _source_for(agents.get(file, ""))
+        doc = source.document(path, text)
+        stats: dict = {}
+        new, count = redact_text(text, fps, rules, doc.is_json, doc=doc, stats=stats)
+        report.signed += stats.get("signed", 0)
         if not count:
+            if not stats.get("signed"):
+                report.failed.append((file, "didn't find it again; did the file change since the scan?"))
             continue
-        if not _still_valid(text, new, kind):
+        if not _still_valid(text, new, doc.kind):
             report.failed.append((file, "redacting would have broken the JSON, left it alone"))
+            continue
+        if dry_run:
+            report.replacements += count
+            report.files_changed.append(file)
+            continue
+        try:
+            now_st = path.stat()
+            if (now_st.st_size, now_st.st_mtime_ns) != (before.st_size, before.st_mtime_ns):
+                report.failed.append((file, "it changed while being scrubbed, run scrub again"))
+                continue
+            write_atomic(path, new)
+        except OSError as exc:
+            report.failed.append((file, str(exc)))
             continue
         report.replacements += count
         report.files_changed.append(file)
-        if not dry_run:
-            try:
-                write_atomic(path, new)
-            except OSError as exc:
-                report.failed.append((file, str(exc)))
-                report.files_changed.pop()
-                report.replacements -= count
     return report
 
