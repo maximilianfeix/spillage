@@ -149,6 +149,9 @@ class Document:
         self.kind = kind or {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
         self._parsed: Any = _UNSET
         self._first_state: Optional[dict] = None
+        # set when this document is only one part of a big file
+        self.line_offset = 0
+        self.first_line: Optional[str] = None
 
     @property
     def is_json(self) -> bool:
@@ -158,7 +161,7 @@ class Document:
         return decode_json_fragment(raw) if self.is_json else raw
 
     def line_of(self, offset: int) -> int:
-        return self.text.count("\n", 0, offset) + 1
+        return self.line_offset + self.text.count("\n", 0, offset) + 1
 
     def locate(self, start: int, secret: str) -> Optional[Location]:
         """Where a secret sits. None if it only occurs inside a blob we deliberately skip
@@ -218,7 +221,9 @@ class Document:
         if self._first_state is None:
             state = {"session": "", "project": ""}
             end = self.text.find("\n")
-            first = self.text[: end if end != -1 else len(self.text)]
+            first = self.first_line
+            if first is None:
+                first = self.text[: end if end != -1 else len(self.text)]
             try:
                 self.source.update_state(json.loads(first), state)
             except ValueError:
