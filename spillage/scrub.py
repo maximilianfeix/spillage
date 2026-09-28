@@ -162,6 +162,9 @@ def scrub(
     now = time.time() if now is None else now
     for file, fps in sorted(plan(targets).items()):
         path = Path(file)
+        if path.suffix == ".vscdb":
+            report.failed.append((file, "Cursor's database can't be scrubbed yet, delete the chat in Cursor instead"))
+            continue
         try:
             if not include_active and now - path.stat().st_mtime < ACTIVE_SECONDS:
                 report.skipped_active.append(file)
