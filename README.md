@@ -26,7 +26,7 @@
 
 Your coding agent writes down everything. Every `.env` it read, every key you pasted "just to test this one call", every `printenv` it ran to debug something. Claude Code, Codex, Gemini CLI, Cline and the rest keep those conversations on your disk as plain JSON, and every one of those keys was also sent to the model provider when it happened.
 
-**spillage** finds them. It reads the logs of ten coding agents, tells you which keys leaked, *how* they got there (you pasted it, a tool printed it, the model repeated it) and links you to the page where you rotate each one. Then it scrubs them from disk and installs hooks so the next one gets blocked before it's sent.
+**spillage** finds them. It reads the logs of thirteen coding agents, tells you which keys leaked, *how* they got there (you pasted it, a tool printed it, the model repeated it) and links you to the page where you rotate each one. Then it scrubs them from disk and installs hooks so the next one gets blocked before it's sent.
 
 <div align="center">
 <img src="docs/demo.svg" alt="Animated demo: spillage finds a GitHub token, a Stripe key and an Anthropic key in Claude Code and Codex logs, scrubs them and installs the guard hooks" width="860">
@@ -91,6 +91,9 @@ Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, whic
 | **Cline, Roo Code, Kilo Code** | task histories in the extension storage of VS Code, Cursor, Windsurf, VSCodium and Kiro |
 | **Continue** | `~/.continue/sessions/` |
 | **Cursor** | chats in `state.vscdb` (SQLite), global and per workspace. Only chat rows are read, never Cursor's own login |
+| **Qwen Code** | `~/.qwen/tmp/*/chats/`, logs and checkpoints |
+| **Goose** | `~/.local/share/goose/sessions/sessions.db` (SQLite) and older `~/.config/goose/sessions/*.jsonl` |
+| **Crush** | `.crush/crush.db` (SQLite) in each project it knows about |
 | **Aider** | `.aider.chat.history.md` and `.aider.input.history` in your projects |
 | **SpecStory** | `.specstory/history/*.md` in your projects |
 | **GitHub Copilot CLI** | `~/.copilot/session-state/`, `history-session-state/` |
@@ -273,7 +276,7 @@ repos:
 
 ```
  agent logs ──▶ discover ──▶ raw text ──▶ 56 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
- (10 agents)     per agent    per file     literal-     checksums,   parse only  one finding
+ (13 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with
                                           on all cores              a match

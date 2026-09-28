@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Qwen Code, Goose (SQLite and JSONL sessions) and Crush (per-project SQLite). SQLite databases are read with one generic, read-only reader
 - Homebrew: `brew install maximilianfeix/tap/spillage`
 - a website: https://maximilianfeix.github.io/spillage/
 
