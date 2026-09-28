@@ -251,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.4.0
+      - uses: maximilianfeix/spillage@v0.5.0
         with:
           strict: true   # fail on any committed transcript
 ```
@@ -264,7 +264,7 @@ Each secret becomes an error annotation on the file and line, and the job summar
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/maximilianfeix/spillage
-    rev: v0.4.0
+    rev: v0.5.0
     hooks:
       - id: spillage               # block transcripts that contain secrets
       # - id: no-agent-transcripts # or block agent transcripts altogether
