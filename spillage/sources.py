@@ -435,8 +435,10 @@ class Codex(Source):
             return
         payload = record.get("payload")
         if record.get("type") == "session_meta" and isinstance(payload, dict):
-            state["session"] = payload.get("id", state["session"])
-            state["project"] = payload.get("cwd", state["project"])
+            if isinstance(payload.get("id"), str):
+                state["session"] = payload["id"]
+            if isinstance(payload.get("cwd"), str):
+                state["project"] = payload["cwd"]
         if isinstance(record.get("session_id"), str):
             state["session"] = record["session_id"]
 
