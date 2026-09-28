@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Aider (`.aider.chat.history.md`, `.aider.input.history`) and SpecStory (`.specstory/history/`). They write into project folders, so those are found through the working directories of your Claude Code and Codex sessions. Markdown logs get origins too: `####` lines are prompts in Aider, quoted `>` lines tool output
+
 ## [0.2.0] - 2026-09-28
 
 ### Changed
