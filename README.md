@@ -183,7 +183,8 @@ It is careful with the files, because your agent reads them back when you resume
 - works on the raw text, so every byte it doesn't redact stays exactly as it was
 - parses every changed JSON line again before writing; if a line would break, the file is left alone
 - writes atomically and keeps the file mode, the modification time (so `claude --resume` still sorts right) and the line endings
-- skips files written in the last minute, since that's most likely the session you're running it from
+- skips files written in the last minute, since that's most likely the session you're running it from, and leaves a file alone if it changes while being scrubbed
+- leaves Claude's signed thinking blocks untouched (editing them breaks `--resume`) and tells you how many keys stayed in them
 
 > [!IMPORTANT]
 > Scrubbing cleans your disk. It does not un-send anything. Every key in these logs went to the model provider when the conversation happened, so **rotate first**, then scrub. The report links to the right page for each key.
@@ -253,7 +254,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.6.5
+      - uses: maximilianfeix/spillage@v0.6.6
         with:
           strict: true   # fail on any committed transcript
 ```
@@ -266,7 +267,7 @@ Each secret becomes an error annotation on the file and line, and the job summar
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/maximilianfeix/spillage
-    rev: v0.6.5
+    rev: v0.6.6
     hooks:
       - id: spillage               # block transcripts that contain secrets
       # - id: no-agent-transcripts # or block agent transcripts altogether

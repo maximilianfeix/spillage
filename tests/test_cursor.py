@@ -83,4 +83,4 @@ def test_scrub_leaves_cursor_alone(cursor_home):
     result = Scanner(workers=1).scan(build_sources(["cursor"]))
     report = scrub(result.findings, include_active=True)
     assert report.replacements == 0
-    assert any("Cursor" in why for _, why in report.failed)
+    assert any("database" in why for _, why in report.failed)

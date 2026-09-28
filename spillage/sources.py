@@ -89,18 +89,9 @@ class Source:
         try:
             if path.stat().st_size > MAX_FILE_BYTES:
                 return None
-            with open(path, encoding="utf-8", errors="strict") as fh:
-                return fh.read()
-        except UnicodeDecodeError:
-            try:
-                raw = path.read_bytes()
-            except OSError:
-                return None
-            if b"\0" in raw[:8192]:
-                return None
-            return raw.decode("utf-8", errors="replace")
         except OSError:
             return None
+        return read_text_exact(path)
 
     def document(self, path: Path, text: str) -> Document:
         return Document(self, path, text)
@@ -131,6 +122,20 @@ class Source:
 
     def session_for(self, path: Path, state: dict) -> str:
         return state.get("session") or path.stem
+
+
+def read_text_exact(path: Path) -> Optional[str]:
+    """A file's text exactly as on disk: line endings untouched, and a stray invalid byte kept
+    as a surrogate so encoding it back gives the same bytes. None for binary files.
+
+    Scanning and scrubbing both read through here, so they always see the same text."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in raw[:8192]:
+        return None
+    return raw.decode("utf-8", errors="surrogateescape")
 
 
 def decode_json_fragment(raw: str) -> str:

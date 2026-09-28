@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.6] - 2026-09-28
+
+### Fixed
+- `scrub` could report success and leave a key on disk: files with Windows line endings (a multi-line key got a different fingerprint on the second read), files the key had vanished from since the scan, and symlinks (the link was replaced, the target kept the key). Scanning and scrubbing now read files through the same function, a file where nothing is found again is reported, and symlink targets are rewritten
+- a single invalid UTF-8 byte made a whole file unscrubbable; bytes are now kept exactly as they were
+- a file that changes while being scrubbed is left alone instead of losing what was appended
+- secrets inside Claude's signed thinking blocks are left alone and reported: editing them breaks `--resume` of that session
+- the JSON check could miss a broken line that contains U+2028
+- Ctrl-D at the scrub prompt means no instead of a traceback
+
 ## [0.6.5] - 2026-09-28
 
 ### Fixed
