@@ -16,7 +16,7 @@
 <a href="#install"><img src="https://img.shields.io/badge/Install-FF6B4A?style=for-the-badge&labelColor=0E0F13" alt="Install"></a>
 <a href="#scrub"><img src="https://img.shields.io/badge/Scrub-0E0F13?style=for-the-badge" alt="Scrub"></a>
 <a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
-<a href="#what-it-finds"><img src="https://img.shields.io/badge/56_rules-0E0F13?style=for-the-badge" alt="56 rules"></a>
+<a href="#what-it-finds"><img src="https://img.shields.io/badge/57_rules-0E0F13?style=for-the-badge" alt="57 rules"></a>
 
 [Website](https://maximilianfeix.github.io/spillage/) · [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [How it works](#how-it-works) · [FAQ](#faq)
 
@@ -128,7 +128,7 @@ spillage checks the global files and the ones in your project folders, and shows
 
 ## What it finds
 
-56 rules. Each one knows the key's exact shape and where to revoke it.
+57 rules. Each one knows the key's exact shape and where to revoke it.
 
 | | |
 | --- | --- |
@@ -311,7 +311,7 @@ repos:
 ## How it works
 
 ```
- agent logs ──▶ discover ──▶ raw text ──▶ 56 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
+ agent logs ──▶ discover ──▶ raw text ──▶ 57 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
  (13 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with
