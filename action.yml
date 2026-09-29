@@ -15,6 +15,9 @@ inputs:
   all-files:
     description: Scan every tracked file for secrets, not just agent transcripts
     default: "false"
+  sarif:
+    description: Also write a SARIF report to this path, for github/codeql-action/upload-sarif
+    default: ""
 
 outputs:
   transcripts:
@@ -23,6 +26,9 @@ outputs:
   secrets:
     description: Number of distinct secrets found
     value: ${{ steps.run.outputs.secrets }}
+  sarif:
+    description: Path of the SARIF report, if one was asked for
+    value: ${{ inputs.sarif }}
 
 runs:
   using: composite
@@ -43,8 +49,10 @@ runs:
         SPILLAGE_PATH: ${{ inputs.path }}
         SPILLAGE_STRICT: ${{ inputs.strict }}
         SPILLAGE_ALL: ${{ inputs.all-files }}
+        SPILLAGE_SARIF: ${{ inputs.sarif }}
       run: |
         args=(repo "$SPILLAGE_PATH" --format github)
         [ "$SPILLAGE_STRICT" = "true" ] && args+=(--strict)
         [ "$SPILLAGE_ALL" = "true" ] && args+=(--all-files)
+        [ -n "$SPILLAGE_SARIF" ] && args+=(--sarif "$SPILLAGE_SARIF")
         "$SPILLAGE_PY" -m spillage "${args[@]}"

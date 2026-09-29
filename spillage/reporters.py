@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from typing import Callable, Dict
+from pathlib import Path
+from typing import Callable, Dict, Optional
 
 from .models import Finding, Origin, Severity
 from .scanner import ScanResult
 from .sources import get_source
 from .term import SEVERITY_FG, Painter, ellipsize, human_bytes, short_path, width
 
+HOMEPAGE = "https://github.com/maximilianfeix/spillage"
 Reporter = Callable[..., str]
 _REPORTERS: Dict[str, Reporter] = {}
 
@@ -140,12 +142,16 @@ def _finding_block(f: Finding, p: Painter, verbose: bool) -> list:
         f"  {p.badge(f.severity)} {p(f.rule_name, 'bold')}  {p(f.masked, 'cyan')}  {p(f.fingerprint, 'gray')}"
     )
     sessions = len(f.sessions)
-    seen = f"seen {len(f.locations)}× in {sessions} session{'s' if sessions != 1 else ''}"
-    span = _date(f.first_seen or "")
-    if f.last_seen and _date(f.last_seen) != span:
-        span += f" → {_date(f.last_seen)}"
-    agents = ", ".join(agent_label(a) for a in f.agents)
-    lines.append(f"{' ' * 13}{p(seen, 'dim')} {p('·', 'dim')} {agents} {p('·', 'dim')} {p(span, 'dim')}")
+    seen = f"seen {len(f.locations)}×"
+    if sessions:  # settings files have no sessions and no timestamps
+        seen += f" in {sessions} session{'s' if sessions != 1 else ''}"
+    parts = [p(seen, "dim"), ", ".join(agent_label(a) for a in f.agents)]
+    if f.first_seen:
+        span = _date(f.first_seen)
+        if f.last_seen and _date(f.last_seen) != span:
+            span += f" → {_date(f.last_seen)}"
+        parts.append(p(span, "dim"))
+    lines.append(" " * 13 + f" {p('·', 'dim')} ".join(parts))
     lines.append(f"{' ' * 13}{p('how:', 'dim')}    {_how(f)}")
     shown = f.locations if verbose else f.locations[:1]
     for i, loc in enumerate(shown):
@@ -183,6 +189,69 @@ def render_markdown(result: ScanResult, **_) -> str:
         )
     out += ["", "Rotate first, then `spillage scrub` to remove them from disk.", ""]
     return "\n".join(out)
+
+
+SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
+_SARIF_LEVEL = {Severity.CRITICAL: "error", Severity.HIGH: "error", Severity.MEDIUM: "warning", Severity.LOW: "note"}
+# GitHub code scanning sorts and labels alerts by this 0-10 score (9+ critical, 7+ high, 4+ medium)
+_SECURITY_SEVERITY = {Severity.CRITICAL: "9.5", Severity.HIGH: "8.0", Severity.MEDIUM: "5.5", Severity.LOW: "3.0"}
+
+
+@reporter("sarif")
+def render_sarif(result: ScanResult, uri: Optional[Callable[[str], str]] = None, **_) -> str:
+    """SARIF 2.1.0, for GitHub code scanning and other viewers. `uri` turns a file path into
+    the artifact URI: relative to the checkout for code scanning, a file:// URI by default."""
+    from . import __version__
+    from .rules import get_rules
+
+    to_uri = uri or (lambda f: Path(f).resolve().as_uri())
+    default = {r.id: r.severity for r in get_rules()}
+    rules: Dict[str, dict] = {}
+    results = []
+    for f in result.findings:
+        level = _SARIF_LEVEL[f.severity]
+        rotate = f" Rotate it: {f.rotate_url}" if f.rotate_url else ""
+        # code scanning takes the severity from the rule, and one rule can rate secrets differently
+        # (a Stripe test key is low, a live one critical): other severities get a rule of their own
+        rule_id = f.rule_id if default.get(f.rule_id) == f.severity else f"{f.rule_id}/{f.severity.label}"
+        rules.setdefault(rule_id, {
+            "id": rule_id,
+            "shortDescription": {"text": f.rule_name},
+            "fullDescription": {"text": f"A {f.provider} credential that an AI coding agent wrote to disk."},
+            "helpUri": f.rotate_url or HOMEPAGE,
+            "help": {
+                "text": f"Rotate the key first{': ' + f.rotate_url if f.rotate_url else ''}, then remove it from "
+                        "the file. Deleting it doesn't un-send it: it went to the model provider too.",
+                "markdown": f"**Rotate the key first**{f' ([here]({f.rotate_url}))' if f.rotate_url else ''}, then "
+                            "remove it from the file. Deleting it doesn't un-send it: it went to the model "
+                            "provider too.",
+            },
+            "defaultConfiguration": {"level": level},
+            "properties": {"tags": ["security", "secret", f.provider], "precision": "high",
+                           "security-severity": _SECURITY_SEVERITY[f.severity]},
+        })
+        for loc in f.locations:
+            artifact = to_uri(loc.file)
+            physical: dict = {"artifactLocation": {"uri": artifact}}
+            if loc.line:
+                physical["region"] = {"startLine": loc.line}
+            how = Origin.DESCRIPTIONS.get(loc.origin, "")
+            results.append({
+                "ruleId": rule_id,
+                "level": level,
+                "message": {"text": f"{f.rule_name} ({f.masked}, fingerprint {f.fingerprint})"
+                                    f"{': ' + how if how else ''}.{rotate}"},
+                "locations": [{"physicalLocation": physical}],
+                # one alert per secret and file, stable across runs and line shifts
+                "partialFingerprints": {"spillageSecret/v1": f"{f.fingerprint}:{artifact}"},
+                "properties": {"agent": loc.agent, "origin": loc.origin},
+            })
+    run = {
+        "tool": {"driver": {"name": "spillage", "version": __version__, "informationUri": HOMEPAGE,
+                            "rules": list(rules.values())}},
+        "results": results,
+    }
+    return json.dumps({"$schema": SARIF_SCHEMA, "version": "2.1.0", "runs": [run]}, indent=2, ensure_ascii=False)
 
 
 # registered here so `render(result, "html")` works without importing the CLI first

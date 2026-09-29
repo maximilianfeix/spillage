@@ -157,3 +157,16 @@ def test_claude_config_dir_holds_claude_json(home, tmp_path, monkeypatch):
     write_json(tmp_path / "cfg" / ".claude.json", {"mcpServers": {"gh": {"env": {"T": gh}}}})
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
     assert gh in scan()
+
+
+def test_a_file_reached_two_ways_is_read_once(home, tmp_path):
+    gh = fakes.github()
+    write_json(home.root / ".mcp.json", {"mcpServers": {"gh": {"env": {"T": gh}}}})
+    link = tmp_path / "home-link"
+    try:
+        link.symlink_to(home.root, target_is_directory=True)
+    except OSError:
+        pytest.skip("no symlinks here")
+    # home through a symlink, the current folder (a project folder too) as the real path
+    names = [p.name for p in AgentConfig(link).discover()]
+    assert names.count(".mcp.json") == 1
