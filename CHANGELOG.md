@@ -9,6 +9,7 @@
 
 ### Fixed
 - Windows: `guard` didn't recognise its own hooks when they run through `spillage.exe`, so every `guard install` added them again, `guard uninstall` left them in place and `guard status` reported them missing. Running `guard install` once more cleans up the duplicates
+- Windows: output piped or redirected (`spillage > report.txt`, CI logs, the `python -m spillage` hook fallback) crashed on the first ✓, since Windows writes those in cp1252. It's UTF-8 now, and a console that can't show a symbol gets a `?`
 - tests run on Windows in CI, next to Linux and macOS
 
 ## [0.6.9] - 2026-09-28
