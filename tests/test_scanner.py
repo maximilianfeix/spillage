@@ -139,7 +139,7 @@ def test_read_part_covers_the_file_exactly(tmp_path):
 
     path = tmp_path / "x.jsonl"
     lines = [f'{{"n": {i}, "pad": "{"z" * (i % 17)}"}}\n' for i in range(500)]
-    path.write_text("".join(lines), encoding="utf-8")
+    path.write_bytes("".join(lines).encode("utf-8"))  # text mode would write \r\n on Windows
     for parts in (1, 2, 3, 7, 50):
         pieces = [read_part(path, i, parts) for i in range(parts)]
         assert "".join(p[0] for p in pieces) == "".join(lines)

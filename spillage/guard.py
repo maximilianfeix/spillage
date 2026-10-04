@@ -29,6 +29,9 @@ from typing import Any, List, Optional, Tuple
 from .scanner import scan_text
 
 MARK = "spillage hook"
+# Our hook in any form it gets installed as: `spillage hook …`, `/path/to/spillage hook …`,
+# `"C:\…\spillage.exe" hook …` on Windows, or `python -m spillage hook …`.
+_HOOK_COMMAND = re.compile(r"""(?:^|[\s"'\\/])spillage(?:\.exe)?["']?\s+hook\b""", re.IGNORECASE)
 ALLOW_WORD = "spillage:allow"
 TOOL_MATCHER = "Read|Grep|Bash|NotebookRead|mcp__.*read.*"
 
@@ -379,9 +382,13 @@ def _save(path: Path, data: dict) -> None:
     os.replace(tmp, str(path))
 
 
+def is_hook_command(command: str) -> bool:
+    return bool(_HOOK_COMMAND.search(command))
+
+
 def _is_ours(group: Any) -> bool:
     return isinstance(group, dict) and any(
-        isinstance(h, dict) and MARK in str(h.get("command", "")) for h in group.get("hooks", [])
+        isinstance(h, dict) and is_hook_command(str(h.get("command", ""))) for h in group.get("hooks", [])
     )
 
 
