@@ -79,6 +79,18 @@ POSITIVES = [
     ("square-token", lambda: fakes.square("csp")),
     ("stripe-webhook-secret", fakes.stripe_webhook),
     ("slack-app-token", fakes.slack_app),
+    ("huggingface-org-token", fakes.huggingface_org),
+    ("clojars-token", fakes.clojars),
+    ("duffel-token", fakes.duffel),
+    ("easypost-api-key", fakes.easypost),
+    ("easypost-api-key", lambda: fakes.easypost(test=True)),
+    ("frameio-token", fakes.frameio),
+    ("infracost-token", fakes.infracost),
+    ("prefect-token", fakes.prefect),
+    ("readme-api-key", fakes.readme_key),
+    ("scalingo-token", fakes.scalingo),
+    ("cloudflare-origin-ca-key", fakes.cloudflare_origin_ca),
+    ("gitlab-agent-token", fakes.gitlab_agent),
 ]
 
 
@@ -285,3 +297,33 @@ def test_new_tokens_inside_longer_tokens_are_not_matched():
     assert ids("x" + fakes.netlify()) == []
     assert ids(fakes.pulumi() + "ab") == []
     assert ids(fakes.e2b() + "0") == []
+
+
+def test_shapes_that_the_first_version_of_these_rules_missed():
+    # each of these is valid by the gitleaks rule set and slipped through before
+    slack = "xapp" + "-1-A" + fakes.rand(9, "ABCDEFGHJK0123456789") + "-" + fakes.rand(12, "0123456789") + "-" \
+        + fakes.rand(40, "abcdefghijklmnopqrstuvwxyz0123456789")
+    square = "sq0" + "atp-" + fakes.rand(48)
+    tailscale = "tskey" + "-webhook-" + fakes.rand(12) + "CNTRL-" + fakes.rand(32)
+    bitbucket = "AT" + "BB" + fakes.rand(28) + "=" + fakes.rand(7, "0123456789ABCDEF")
+    assert ids(slack) == ["slack-app-token"]
+    assert ids(square) == ["square-token"]
+    assert ids(tailscale) == ["tailscale-key"]
+    assert ids(bitbucket) == ["bitbucket-app-password"]
+
+
+@pytest.mark.parametrize("text", [
+    "ico-favicon-16x16-and-32x32-in-one-file",  # an icon name, not an Infracost token
+    "pnu_" + "a" * 36,
+    "tk-us-east-1",
+    "v1.0-rc1",
+    "rdme_docs",
+    "EZAKshort",
+    "CLOJARS_USERNAME",
+    "fio-u-",
+    "api_org_name",
+    "duffel_test_key",
+    "glagent-token",
+])
+def test_lookalikes_of_the_gitleaks_formats(text):
+    assert ids(text) == []

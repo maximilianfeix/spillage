@@ -16,7 +16,7 @@
 <a href="#install"><img src="https://img.shields.io/badge/Install-FF6B4A?style=for-the-badge&labelColor=0E0F13" alt="Install"></a>
 <a href="#scrub"><img src="https://img.shields.io/badge/Scrub-0E0F13?style=for-the-badge" alt="Scrub"></a>
 <a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
-<a href="#what-it-finds"><img src="https://img.shields.io/badge/76_rules-0E0F13?style=for-the-badge" alt="76 rules"></a>
+<a href="#what-it-finds"><img src="https://img.shields.io/badge/87_rules-0E0F13?style=for-the-badge" alt="87 rules"></a>
 
 [Website](https://maximilianfeix.github.io/spillage/) · [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [Compared](#compared) · [How it works](#how-it-works) · [FAQ](#faq)
 
@@ -129,16 +129,16 @@ spillage checks the global files and the ones in your project folders, and shows
 
 ## What it finds
 
-76 rules. Each one knows the key's exact shape and where to revoke it.
+87 rules. Each one knows the key's exact shape and where to revoke it.
 
 | | |
 | --- | --- |
 | **AI providers** | Anthropic (API, admin, and Claude Code OAuth tokens from `claude setup-token`), OpenAI (user, project, service account, admin), OpenRouter, Google AI / Gemini, Hugging Face, Groq, xAI, Perplexity, Replicate |
 | **AI app stack** | Supabase secret keys, LangSmith, Pinecone, Tavily, Firecrawl, Resend, PostHog, Vercel Blob. Most of these aren't in gitleaks' default rules |
 | **Code and packages** | GitHub (classic, OAuth, app, refresh, fine-grained; checksum-verified), GitLab, npm, PyPI |
-| **Deploy and hosting** | Docker Hub, Fly.io, Netlify, Render, Heroku, Pulumi, Tailscale, Azure storage account keys, age secret keys, RubyGems, Bitbucket app passwords |
+| **Deploy and hosting** | Docker Hub, Fly.io, Netlify, Render, Heroku, Scalingo, Pulumi, Infracost, Tailscale, Cloudflare Origin CA keys, Azure storage account keys, age secret keys, RubyGems, Clojars, Bitbucket app passwords, GitLab agent tokens |
 | **Cloud and infra** | AWS access key id and secret key, Google OAuth client secrets and refresh tokens, DigitalOcean, Databricks, Doppler, HashiCorp Vault, 1Password service accounts, PlanetScale |
-| **Payments and SaaS** | Stripe (live is critical, test is low), Slack tokens and webhooks, Discord bot tokens and webhooks, Telegram bots, SendGrid, Brevo, Twilio, Shopify, Linear, Notion, Sentry, Grafana, Postman, Atlassian, Figma, Square, Stripe webhook secrets, Slack app tokens, New Relic, Mapbox, Airtable, ElevenLabs, E2B |
+| **Payments and SaaS** | Stripe (live is critical, test is low), Slack tokens and webhooks, Discord bot tokens and webhooks, Telegram bots, SendGrid, Brevo, Twilio, Shopify, Linear, Notion, Sentry, Grafana, Postman, Atlassian, Figma, Square, Stripe webhook secrets, Slack app tokens, New Relic, Mapbox, Airtable, ElevenLabs, E2B, Prefect, ReadMe, Duffel, EasyPost, Frame.io |
 | **Everything else** | private keys (RSA, EC, OpenSSH, PGP, …), database URLs with a password in them, JWTs (Supabase `anon` keys count as low), and `API_KEY=…` / `"client_secret": "…"` / `Bearer …` with a high-entropy value |
 
 **Plus your own secrets.** Patterns can't recognise a random database password or an Azure key. So spillage also reads the `.env` files in your projects (the current folder and every folder your agent sessions ran in), takes the values of anything named like a key, token, secret or password, and looks for those exact strings in the logs. They show up as *Value of POSTGRES_PASSWORD from ~/code/shop/.env*, never with the value itself. `--no-env` turns that off; the `.env` files are only read, never changed.
@@ -351,7 +351,7 @@ Run them too. They are built for repositories and live sessions, spillage is bui
 | **Keys already in the logs** | found, with the session, the project and whether you, a tool or the model wrote them | found as plain text, without the conversation around them | not covered, it scans sessions as they happen |
 | **Cleaning up** | redacts in place, `--resume` keeps working | no | no |
 | **Blocking the next one** | hooks for Claude Code, Codex and Gemini CLI | pre-commit, not inside the agent | hooks for Cursor, Claude Code, Codex, Copilot CLI and more |
-| **Detection** | 76 rules plus the exact values from your `.env` files | hundreds of detectors; TruffleHog also tests whether a key is live | 600+ secret types |
+| **Detection** | 87 rules plus the exact values from your `.env` files | hundreds of detectors; TruffleHog also tests whether a key is live | 600+ secret types |
 | **Account and network** | none | none for gitleaks; TruffleHog calls the provider to verify | GitGuardian account, scans go through its API |
 
 Where the others are ahead: far more detectors, live verification of keys (TruffleHog), and hooks for more tools (ggshield). If you only want to check that a few known keys are not in a folder you are about to publish, Simon Willison's [scan-for-secrets](https://github.com/simonw/scan-for-secrets) does exactly that.
@@ -363,7 +363,7 @@ Sources: the [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](h
 ## How it works
 
 ```
- agent logs ──▶ discover ──▶ raw text ──▶ 76 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
+ agent logs ──▶ discover ──▶ raw text ──▶ 87 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
  (13 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with
@@ -452,7 +452,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 - [x] [CI on all three operating systems](https://github.com/maximilianfeix/spillage/issues/1)
 - [x] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7)
 - [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
-- [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 76 rules
+- [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 87 rules
 - [ ] PyPI release
 
 <a id="community"></a>

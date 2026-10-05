@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- 11 more rules, 87 in total, with the formats from the gitleaks default rules: Hugging Face organisation tokens, Clojars, Duffel, EasyPost, Frame.io, Infracost, Prefect, ReadMe, Scalingo, Cloudflare Origin CA keys and GitLab agent tokens ([#68](https://github.com/maximilianfeix/spillage/issues/68))
+
+### Fixed
+- four rules from 0.7.0 were stricter than the real formats and could miss keys: Slack app-level tokens (any length of the last part, not only 64 hex characters), Square access tokens (22 to 60 characters), Tailscale keys (every kind, not only `auth`, `api` and `client`) and Bitbucket app passwords (`_`, `-` and `=` are allowed)
+
 ## [0.7.0] - 2026-10-05
 
 ### Added
