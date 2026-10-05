@@ -163,7 +163,10 @@ spillage check "some text"        scan a string, or stdin: pbpaste | spillage ch
 spillage ignore <fingerprint>     stop reporting a secret (a test key, say)
 spillage agents                   which agents were found, and where
 spillage rules                    what it looks for
+spillage completions zsh          tab completion for zsh, bash or fish
 ```
+
+Tab completion for commands and options: add `eval "$(spillage completions zsh)"` to your `~/.zshrc` (or `bash` to `~/.bashrc`), or for fish run `spillage completions fish > ~/.config/fish/completions/spillage.fish`.
 
 The exit code is `1` when something was found and `0` when not, so it drops into cron, a shell hook or CI as is. `--exit-zero` turns that off.
 

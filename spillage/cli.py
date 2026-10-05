@@ -119,6 +119,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("agents", help="show which agents' logs were found and where")
     sub.add_parser("rules", help="list the detection rules")
 
+    completions = sub.add_parser("completions", help="print a completion script for bash, zsh or fish")
+    completions.add_argument("shell", choices=["bash", "zsh", "fish"])
+
     ignore = sub.add_parser("ignore", help="stop reporting a secret by its fingerprint")
     ignore.add_argument("fingerprints", nargs="+", metavar="FINGERPRINT")
     ignore.add_argument("--note", default="", help="why, for future you")
@@ -143,6 +146,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _fix_output_encoding()
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
+    if argv and argv[0] not in COMMANDS and not argv[0].startswith("-"):
+        # scan takes no bare words, so this is a mistyped command and not an argument for it
+        print(f"spillage: {_unknown_command(argv[0])}", file=sys.stderr)
+        return EXIT_USAGE
     if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help", "-V", "--version")):
         argv = ["scan"] + argv
     args = parser.parse_args(argv)
@@ -154,6 +161,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except KeyboardInterrupt:
         print("", file=sys.stderr)
         return 130
+
+
+def _unknown_command(word: str) -> str:
+    import difflib
+
+    names = [name for name in COMMANDS if name != "hook"]
+    close = difflib.get_close_matches(word, names, n=1, cutoff=0.6)
+    hint = f"did you mean `spillage {close[0]}`?" if close else "`spillage --help` lists the commands."
+    return f"unknown command {word!r}, {hint}"
 
 
 ENV_RULE = "env-value"
@@ -460,6 +476,13 @@ def cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_CLEAN
 
 
+def cmd_completions(args: argparse.Namespace) -> int:
+    from .completions import script
+
+    print(script(args.shell, build_parser()), end="")
+    return EXIT_CLEAN
+
+
 def cmd_ignore(args: argparse.Namespace) -> int:
     for fp in args.fingerprints:
         if not re.fullmatch(r"[0-9a-f]{12}", fp):
@@ -481,6 +504,7 @@ COMMANDS = {
     "check": cmd_check,
     "agents": cmd_agents,
     "rules": cmd_rules,
+    "completions": cmd_completions,
     "ignore": cmd_ignore,
 }
 
