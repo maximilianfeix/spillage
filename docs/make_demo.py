@@ -139,6 +139,7 @@ class Timeline:
     def __init__(self) -> None:
         self.items: list = []  # (svg, start, end) end = frame end
         self.frames: list = []
+        self.settled: list = []  # the second each frame has finished printing
         self.t = 0.0
 
     def frame(self, lines: list, gap: float = 0.035) -> None:
@@ -162,16 +163,20 @@ class Timeline:
                 members.append((line_svg(payload, PAD_X, y), self.t, None, None))
                 self.t += gap
             row += 1
+        self.settled.append(self.t)
         self.t += 3.2  # let it sit
         self.frames.append((start, self.t))
         for svg, t0, _, extra in members:
-            self.items.append((svg, t0, self.t, extra))
+            self.items.append((svg, t0, self.t, extra, len(self.frames) - 1))
         self.t += 0.4
 
 
 def render(tl: Timeline, rows: int, still: int = -1) -> str:
     """still >= 0 draws that frame without animation, for checking the layout."""
     total = tl.t
+    # the loop starts where the first run has just finished printing, so the first thing anyone
+    # sees is a result and not an empty terminal
+    skip = tl.settled[0]
     height = PAD_TOP + rows * LINE_H + 10
     width = PAD_X * 2 + COLS * CHAR_W
     css, body = [], []
@@ -179,7 +184,7 @@ def render(tl: Timeline, rows: int, still: int = -1) -> str:
     def pct(t: float) -> str:
         return f"{max(0.0, min(100.0, t / total * 100)):.3f}%"
 
-    for i, (svg, t0, t1, extra) in enumerate(tl.items):
+    for i, (svg, t0, t1, extra, frame) in enumerate(tl.items):
         if still >= 0:
             f0, f1 = tl.frames[still]
             if f0 <= t0 < f1:
@@ -189,16 +194,16 @@ def render(tl: Timeline, rows: int, still: int = -1) -> str:
         fade = 0.25
         css.append(f"@keyframes {name}{{0%,{pct(t0)}{{opacity:0}}{pct(t0 + 0.01)},{pct(t1)}{{opacity:1}}"
                    f"{pct(t1 + fade)},100%{{opacity:0}}}}")
-        css.append(f".{name}{{animation:{name} {total:.2f}s linear infinite}}")
-        body.append(f'<g class="{name}">{svg}')
+        css.append(f".{name}{{animation:{name} {total:.2f}s linear -{skip:.2f}s infinite}}")
+        body.append(f'<g class="{name} f{frame}">{svg}')
         if extra and extra[0] == "type":
             _, n, dur, y = extra
             cover = f"c{i}"
             x0 = PAD_X + 2 * CHAR_W
             css.append(f"@keyframes {cover}{{0%,{pct(t0)}{{transform:translateX(0)}}{pct(t0 + dur)},100%"
                        f"{{transform:translateX({n * CHAR_W + 4:.1f}px)}}}}")
-            css.append(f".{cover}{{animation:{cover} {total:.2f}s steps({n * 4}, end) infinite}}")
-            body.append(f'<rect class="{cover}" x="{x0 - 1:.1f}" y="{y - FONT:.1f}" width="{width:.0f}" '
+            css.append(f".{cover}{{animation:{cover} {total:.2f}s steps({n * 4}, end) -{skip:.2f}s infinite}}")
+            body.append(f'<rect class="{cover} cover" x="{x0 - 1:.1f}" y="{y - FONT:.1f}" width="{width:.0f}" '
                         f'height="{LINE_H}" fill="{BG}"/>')
         body.append("</g>")
     styles = "\n".join(css)
@@ -206,7 +211,11 @@ def render(tl: Timeline, rows: int, still: int = -1) -> str:
 <style>
 text {{ font-family: {SANS_MONO}; font-size: {FONT}px; }}
 {styles}
-@media (prefers-reduced-motion: reduce) {{ g, rect {{ animation: none !important; }} }}
+/* without motion: the finished first run, nothing else */
+@media (prefers-reduced-motion: reduce) {{
+  g, rect {{ animation: none !important; }}
+  .cover, g:not(.f0) {{ display: none; }}
+}}
 </style>
 <rect width="100%" height="100%" rx="14" fill="{BG}"/>
 <rect x=".5" y=".5" width="{width - 1:.0f}" height="{height - 1}" rx="14" fill="none" stroke="#262A35"/>

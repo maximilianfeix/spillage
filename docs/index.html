@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>spillage</title>
+<title>spillage: find the API keys your coding agents wrote into their logs</title>
 <meta name="description" content="Your coding agent wrote your API keys into its logs. spillage finds them in Claude Code, Codex, Cursor, Gemini CLI and more, scrubs them, and blocks the next one.">
 <meta property="og:title" content="spillage: find the keys your coding agents spilled">
 <meta property="og:description" content="Scan Claude Code, Codex, Cursor and Gemini CLI logs for leaked API keys. Scrub them. Block the next one.">
@@ -34,8 +34,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--spill); outline
 /* ---- top ---- */
 nav { display: flex; align-items: center; gap: 22px; padding: 26px 0; font-size: 15px; }
 nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; text-decoration: none; margin-right: auto; }
-nav a:not(.brand) { color: var(--muted); text-decoration: none; }
-nav a:not(.brand):hover { color: var(--paper); }
+nav a:not(.brand):not(.star) { color: var(--muted); text-decoration: none; }
+nav a:not(.brand):not(.star):hover { color: var(--paper); }
 
 /* ---- hero ---- */
 .hero { padding: 64px 0 40px; }
@@ -65,6 +65,10 @@ h1 { font-weight: 800; font-size: clamp(44px, 8.4vw, 112px); line-height: .92; l
 .cmd code::before { content: "$ "; color: var(--muted); }
 .cmd button { font: 600 13px var(--display); background: var(--paper); color: var(--ink); border: 0; border-radius: 7px; padding: 7px 12px; cursor: pointer; }
 .install .alt { color: var(--muted); font-size: 15px; }
+.install .alt code { overflow-wrap: anywhere; }
+.star { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--paper); text-decoration: none; border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; }
+.star:hover { border-color: var(--spill); }
+.star svg { fill: var(--spill); }
 
 /* ---- sections ---- */
 section { padding: 88px 0 0; }
@@ -93,6 +97,15 @@ h2 { font-weight: 800; font-size: clamp(30px, 4.2vw, 48px); letter-spacing: -.03
 .facts p { margin: 0 0 26px; color: var(--muted); font-size: 16px; }
 .facts p b { display: block; color: var(--paper); font-weight: 600; font-size: 18px; margin-bottom: 4px; }
 
+.compare { overflow-x: auto; border-top: 1px solid var(--line); }
+.compare table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 16px; }
+.compare th, .compare td { text-align: left; vertical-align: top; padding: 16px 22px 16px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+.compare thead th { font: 600 15px var(--mono); color: var(--paper); }
+.compare thead th:nth-child(2) { color: var(--spill); }
+.compare tbody th { font-weight: 600; color: var(--paper); width: 22%; }
+.compare td:nth-child(2) { color: var(--paper); }
+.compare-note { color: var(--muted); max-width: 60ch; margin: 26px 0 0; }
+
 footer { margin: 110px 0 0; padding: 30px 0 50px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 10px 28px; }
 footer a { color: var(--paper); }
 
@@ -119,7 +132,8 @@ footer a { color: var(--paper); }
     <a class="brand" href="./"><svg width="22" height="22" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 6c9 13 18 23 18 34a18 18 0 0 1-36 0C14 29 23 19 32 6z" fill="var(--spill)"/></svg>spillage</a>
     <a class="hide" href="#how">How it works</a>
     <a class="hide" href="#public">Repos</a>
-    <a href="https://github.com/maximilianfeix/spillage">GitHub</a>
+    <a class="hide" href="#compare">Compared</a>
+    <a class="star" href="https://github.com/maximilianfeix/spillage"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/></svg>Star on GitHub</a>
   </nav>
 
   <header class="hero">
@@ -155,7 +169,7 @@ footer a { color: var(--paper); }
 
   <section>
     <h2>Reads the logs of</h2>
-    <p class="agents">Claude Code, Codex CLI, Cursor, Gemini CLI, Cline, Roo, Kilo, OpenCode, Aider, SpecStory, Qwen Code, Goose, Crush, Continue and Copilot CLI. <span>Plus any folder you point it at.</span></p>
+    <p class="agents">Claude Code, Codex CLI, Cursor, Gemini CLI, Cline, Roo, Kilo, OpenCode, Aider, SpecStory, Qwen Code, Goose, Crush, Continue and Copilot CLI. <span>Plus the MCP server tokens and allowed commands saved in their settings, and any folder you point it at.</span></p>
   </section>
 
   <section id="public">
@@ -172,6 +186,25 @@ footer a { color: var(--paper); }
   <section>
     <h2>What a run looks like</h2>
     <div class="demo"><img src="demo.svg" alt="Animated terminal: spillage finds a GitHub token, a Stripe key and an Anthropic key, scrubs them and installs the guard hooks" width="860" height="692"></div>
+  </section>
+
+  <section id="compare">
+    <h2>Why not gitleaks or TruffleHog?</h2>
+    <p class="intro">Run them too. They're built for repositories, spillage is built for what your agent kept on your disk.</p>
+    <div class="compare" tabindex="0" role="region" aria-label="Comparison of spillage, gitleaks and TruffleHog, and ggshield AI hooks">
+      <table>
+        <thead><tr><th scope="col"></th><th scope="col">spillage</th><th scope="col">gitleaks, TruffleHog</th><th scope="col">ggshield AI hooks</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Built for</th><td>Agent logs and settings on your machine</td><td>Git repositories and their history</td><td>Live agent sessions</td></tr>
+          <tr><th scope="row">Keys already in the logs</th><td>Found, with the session, the project and whether you, a tool or the model wrote them</td><td>Found as plain text, without the conversation around them</td><td>Not covered, it scans sessions as they happen</td></tr>
+          <tr><th scope="row">Cleaning up</th><td>Redacts in place, <code>--resume</code> keeps working</td><td>No</td><td>No</td></tr>
+          <tr><th scope="row">Blocking the next one</th><td>Hooks for Claude Code, Codex and Gemini CLI</td><td>pre-commit, not inside the agent</td><td>Hooks for Cursor, Claude Code, Codex, Copilot CLI and more</td></tr>
+          <tr><th scope="row">Detection</th><td>57 rules plus the exact values from your <code>.env</code> files</td><td>Hundreds of detectors; TruffleHog also tests whether a key is live</td><td>600+ secret types</td></tr>
+          <tr><th scope="row">Account and network</th><td>None</td><td>None for gitleaks; TruffleHog calls the provider to verify</td><td>GitGuardian account, scans go through its API</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="compare-note">Sources: the <a href="https://github.com/gitleaks/gitleaks">gitleaks</a> and <a href="https://github.com/trufflesecurity/trufflehog">TruffleHog</a> READMEs and GitGuardian's <a href="https://docs.gitguardian.com/ggshield-docs/integrations/ai-coding-tools/secret-scanning-for-ai-coding-tools">AI coding tools docs</a>, October 2026.</p>
   </section>
 
   <section>
