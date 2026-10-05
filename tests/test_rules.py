@@ -59,6 +59,26 @@ POSITIVES = [
     ("1password-service-account", fakes.onepassword),
     ("planetscale-token", fakes.planetscale),
     ("brevo-api-key", fakes.brevo),
+    ("docker-pat", fakes.docker_pat),
+    ("tailscale-key", fakes.tailscale),
+    ("tailscale-key", lambda: fakes.tailscale("api")),
+    ("flyio-token", fakes.flyio),
+    ("netlify-token", fakes.netlify),
+    ("render-api-key", fakes.render_key),
+    ("heroku-api-key", fakes.heroku),
+    ("pulumi-token", fakes.pulumi),
+    ("age-secret-key", fakes.age_key),
+    ("rubygems-token", fakes.rubygems),
+    ("bitbucket-app-password", fakes.bitbucket),
+    ("newrelic-user-key", fakes.newrelic),
+    ("mapbox-secret-token", fakes.mapbox),
+    ("airtable-token", fakes.airtable),
+    ("elevenlabs-api-key", fakes.elevenlabs),
+    ("e2b-api-key", fakes.e2b),
+    ("square-token", fakes.square),
+    ("square-token", lambda: fakes.square("csp")),
+    ("stripe-webhook-secret", fakes.stripe_webhook),
+    ("slack-app-token", fakes.slack_app),
 ]
 
 
@@ -233,3 +253,35 @@ def test_get_rules_filters_and_validates():
     assert "jwt" not in [r.id for r in get_rules(exclude=["jwt"])]
     with pytest.raises(ValueError, match="unknown rule"):
         get_rules(only=["nope"])
+
+
+def test_azure_storage_key_is_found_in_a_connection_string():
+    key = fakes.azure_storage_key()
+    conn = f"DefaultEndpointsProtocol=https;AccountName=shop;AccountKey={key};EndpointSuffix=core.windows.net"
+    assert [(r.id, m.secret) for r, m in find_in_text(conn, BUILTIN_RULES)] == [("azure-storage-key", key)]
+    assert "azure-storage-key" not in ids(key)  # 88 characters of base64 on their own could be anything
+    assert ids("AccountKey=<your-storage-key>") == []
+
+
+@pytest.mark.parametrize("text", [
+    "rnd_seed_for_the_shuffle_function_1",  # a variable name, not a Render key
+    "rnd_" + "a" * 32,  # no entropy
+    "dckr_pat_short",
+    "tskey-auth-example",
+    "sk_" + "0" * 48,  # ElevenLabs shape, but a placeholder
+    "pul-" + "0123456789abcdef",  # too short for Pulumi
+    "whsec_your_webhook_secret_goes_here_ok",
+    "AGE-SECRET-KEY-1" + "Q" * 20,
+    "pattern.matches(value)",  # Airtable tokens start with pat
+    "sk.eyJ.short",
+    "NRAK-TOOSHORT",
+    "nfp_netlify",
+])
+def test_new_token_lookalikes_are_not_reported(text):
+    assert ids(text) == []
+
+
+def test_new_tokens_inside_longer_tokens_are_not_matched():
+    assert ids("x" + fakes.netlify()) == []
+    assert ids(fakes.pulumi() + "ab") == []
+    assert ids(fakes.e2b() + "0") == []

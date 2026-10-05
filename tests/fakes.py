@@ -182,3 +182,80 @@ def brevo() -> str:
 
 def sentry_user() -> str:
     return "sntry" + "u_" + rand(64, HEX)
+
+
+def docker_pat() -> str:
+    return "dckr" + "_pat_" + rand(27, ALNUM + "-_")
+
+
+def tailscale(kind: str = "auth") -> str:
+    return "tskey" + f"-{kind}-" + rand(12) + "CNTRL-" + rand(32)
+
+
+def flyio() -> str:
+    return "fm2" + "_" + rand(180, ALNUM + "+/")
+
+
+def netlify() -> str:
+    return "nfp" + "_" + rand(36)
+
+
+def render_key() -> str:
+    return "rnd" + "_" + rand(32)
+
+
+def heroku() -> str:
+    return "HRKU" + "-AA" + rand(58, ALNUM + "-_")
+
+
+def pulumi() -> str:
+    return "pul" + "-" + rand(40, HEX)
+
+
+def age_key() -> str:
+    return "AGE-SECRET" + "-KEY-1" + rand(58, "QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L")
+
+
+def azure_storage_key() -> str:
+    return rand(86, ALNUM + "+/") + "=="
+
+
+def rubygems() -> str:
+    return "rubygems" + "_" + rand(48, HEX)
+
+
+def bitbucket() -> str:
+    return "AT" + "BB" + rand(32)
+
+
+def newrelic() -> str:
+    return "NR" + "AK-" + rand(27, string.ascii_uppercase + string.digits)
+
+
+def mapbox() -> str:
+    return "sk" + ".eyJ" + rand(60) + "." + rand(22, ALNUM + "-_")
+
+
+def airtable() -> str:
+    return "pat" + rand(14) + "." + rand(64, HEX)
+
+
+def elevenlabs() -> str:
+    return "sk" + "_" + rand(48, HEX)
+
+
+def e2b() -> str:
+    return "e2b" + "_" + rand(40, HEX)
+
+
+def square(kind: str = "atp") -> str:
+    return "sq0" + kind + "-" + rand(22 if kind == "atp" else 43, ALNUM + "-_")
+
+
+def stripe_webhook() -> str:
+    return "wh" + "sec_" + rand(32)
+
+
+def slack_app() -> str:
+    app = rand(10, string.ascii_uppercase + string.digits)
+    return "xapp" + "-1-A" + app + "-" + rand(13, string.digits) + "-" + rand(64, HEX)

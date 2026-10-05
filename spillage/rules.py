@@ -497,6 +497,102 @@ BUILTIN_RULES: list = [
         r"(pscale_(?:tkn|pw|oauth)_[A-Za-z0-9_=.\-]{32,64})" + _E,
         Severity.HIGH, ("pscale_",), "https://app.planetscale.com", group=1, min_entropy=3.8,
     ),
+    # ---- Deploy and infrastructure tokens -------------------------------------------------
+    Rule(
+        "docker-pat", "Docker Hub access token", "Docker",
+        r"(dckr_pat_[A-Za-z0-9_\-]{27})" + _E,
+        Severity.HIGH, ("dckr_pat_",), "https://app.docker.com/settings/personal-access-tokens", group=1,
+    ),
+    Rule(
+        "tailscale-key", "Tailscale key", "Tailscale",
+        r"(tskey-(?:auth|api|client)-[A-Za-z0-9]{10,24}-[A-Za-z0-9]{20,64})" + _E,
+        Severity.HIGH, ("tskey-",), "https://login.tailscale.com/admin/settings/keys", group=1,
+    ),
+    Rule(
+        "flyio-token", "Fly.io token", "Fly.io",
+        r"((?:fm1[ar]|fm2)_[A-Za-z0-9+/]{100,}={0,3}|fo1_[A-Za-z0-9_\-]{43})(?![A-Za-z0-9+/_\-])",
+        Severity.HIGH, ("fm1a_", "fm1r_", "fm2_", "fo1_"), "https://fly.io/dashboard", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "netlify-token", "Netlify access token", "Netlify",
+        r"(nfp_[A-Za-z0-9]{36})" + _E,
+        Severity.HIGH, ("nfp_",), "https://app.netlify.com/user/applications", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "render-api-key", "Render API key", "Render",
+        r"(rnd_[A-Za-z0-9]{32})" + _E,
+        Severity.HIGH, ("rnd_",), "https://dashboard.render.com/u/settings", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "heroku-api-key", "Heroku API key", "Heroku",
+        r"(HRKU-AA[A-Za-z0-9_\-]{58})" + _E,
+        Severity.HIGH, ("HRKU-",), "https://dashboard.heroku.com/account/applications", group=1,
+    ),
+    Rule(
+        "pulumi-token", "Pulumi access token", "Pulumi",
+        r"(pul-[a-f0-9]{40})" + _E,
+        Severity.HIGH, ("pul-",), "https://app.pulumi.com/account/tokens", group=1, min_entropy=3.0,
+    ),
+    Rule(
+        "age-secret-key", "age secret key", "age",
+        r"(AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58})" + _E,
+        Severity.CRITICAL, ("AGE-SECRET-KEY-1",), "", group=1, min_entropy=3.0,
+    ),
+    Rule(
+        "azure-storage-key", "Azure storage account key", "Azure",
+        r"AccountKey=([A-Za-z0-9+/]{86}==)",
+        Severity.CRITICAL, ("AccountKey=",), "https://portal.azure.com", group=1, min_entropy=4.0,
+    ),
+    Rule(
+        "rubygems-token", "RubyGems API key", "RubyGems",
+        r"(rubygems_[a-f0-9]{48})" + _E,
+        Severity.HIGH, ("rubygems_",), "https://rubygems.org/profile/api_keys", group=1,
+    ),
+    Rule(
+        "bitbucket-app-password", "Bitbucket app password", "Bitbucket",
+        r"(ATBB[A-Za-z0-9]{32})" + _E,
+        Severity.HIGH, ("ATBB",), "https://bitbucket.org/account/settings/app-passwords/", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "newrelic-user-key", "New Relic user key", "New Relic",
+        r"(NRAK-[A-Z0-9]{27})" + _E,
+        Severity.HIGH, ("NRAK-",), "https://one.newrelic.com/api-keys", group=1,
+    ),
+    Rule(
+        "mapbox-secret-token", "Mapbox secret token", "Mapbox",
+        r"(sk\.eyJ[A-Za-z0-9_\-]{40,400}\.[A-Za-z0-9_\-]{20,40})" + _E,
+        Severity.HIGH, ("sk.eyJ",), "https://account.mapbox.com/access-tokens/", group=1,
+    ),
+    Rule(
+        "airtable-token", "Airtable personal access token", "Airtable",
+        r"(pat[A-Za-z0-9]{14}\.[a-f0-9]{64})" + _E,
+        Severity.HIGH, ("pat",), "https://airtable.com/create/tokens", group=1,
+    ),
+    Rule(
+        "elevenlabs-api-key", "ElevenLabs API key", "ElevenLabs",
+        r"(sk_[a-f0-9]{48})" + _E,
+        Severity.HIGH, ("sk_",), "https://elevenlabs.io/app/settings/api-keys", group=1, min_entropy=3.0,
+    ),
+    Rule(
+        "e2b-api-key", "E2B API key", "E2B",
+        r"(e2b_[a-f0-9]{40})" + _E,
+        Severity.HIGH, ("e2b_",), "https://e2b.dev/dashboard", group=1, min_entropy=3.0,
+    ),
+    Rule(
+        "square-token", "Square access token or application secret", "Square",
+        r"(sq0atp-[A-Za-z0-9_\-]{22}|sq0csp-[A-Za-z0-9_\-]{43})" + _E,
+        Severity.CRITICAL, ("sq0atp-", "sq0csp-"), "https://developer.squareup.com/apps", group=1,
+    ),
+    Rule(
+        "stripe-webhook-secret", "Stripe webhook signing secret", "Stripe",
+        r"(whsec_[A-Za-z0-9]{32,64})" + _E,
+        Severity.MEDIUM, ("whsec_",), "https://dashboard.stripe.com/webhooks", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "slack-app-token", "Slack app-level token", "Slack",
+        r"(xapp-\d-[A-Z0-9]{8,14}-\d{10,14}-[a-f0-9]{64})" + _E,
+        Severity.HIGH, ("xapp-",), "https://api.slack.com/apps", group=1,
+    ),
     # ---- Payments and SaaS ---------------------------------------------------------------
     StripeRule(
         "stripe-secret-key", "Stripe secret key", "Stripe",
