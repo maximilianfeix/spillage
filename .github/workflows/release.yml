@@ -1,0 +1,44 @@
+name: release
+
+# Pushing a tag like v0.7.0 builds the package, checks that the tag matches the version in the
+# code, and publishes a GitHub release with that version's section of the changelog.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Build
+        run: |
+          pip install --quiet build
+          python -m build
+
+      - name: The tag matches the version
+        run: |
+          pip install --quiet dist/*.whl
+          version=$(spillage --version | cut -d' ' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but spillage says $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Release notes from the changelog
+        run: python .github/release_notes.py "$VERSION" > notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
