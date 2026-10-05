@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `spillage doctor`: one screen for where you stand. Secrets in the logs, keys in agent settings, whether the guard hooks are on for every installed agent, the values it watches from your `.env` files, and transcripts committed in the current repository, each with the command that fixes it. Exits 1 while something is open; `-f json` for scripts ([#64](https://github.com/maximilianfeix/spillage/issues/64))
 - `spillage completions bash|zsh|fish` prints a tab-completion script with every command, option and choice, generated from the argument parser ([#62](https://github.com/maximilianfeix/spillage/issues/62))
 - a mistyped command gets a hint (`unknown command 'scna', did you mean `spillage scan`?`) instead of the usage text of `scan`
 - 19 new rules, 76 in total: Docker Hub, Tailscale, Fly.io, Netlify, Render, Heroku, Pulumi, age secret keys, Azure storage account keys, RubyGems, Bitbucket app passwords, New Relic, Mapbox, Airtable, ElevenLabs, E2B, Square, Stripe webhook secrets and Slack app-level tokens ([#58](https://github.com/maximilianfeix/spillage/issues/58))

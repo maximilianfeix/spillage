@@ -161,6 +161,7 @@ spillage watch                    tell me the moment a new key lands in any agen
 spillage repo                     agent transcripts committed to this git repo, and secrets in them
 spillage check "some text"        scan a string, or stdin: pbpaste | spillage check
 spillage ignore <fingerprint>     stop reporting a secret (a test key, say)
+spillage doctor                   where you stand: leaks, settings, guard hooks, this repo
 spillage agents                   which agents were found, and where
 spillage rules                    what it looks for
 spillage completions zsh          tab completion for zsh, bash or fish
@@ -169,6 +170,29 @@ spillage completions zsh          tab completion for zsh, bash or fish
 Tab completion for commands and options: add `eval "$(spillage completions zsh)"` to your `~/.zshrc` (or `bash` to `~/.bashrc`), or for fish run `spillage completions fish > ~/.config/fish/completions/spillage.fish`.
 
 The exit code is `1` when something was found and `0` when not, so it drops into cron, a shell hook or CI as is. `--exit-zero` turns that off.
+
+<a id="doctor"></a>
+
+### Doctor
+
+One screen that says what is still open, and the command for each point:
+
+```
+  spillage doctor
+
+  ✓ logs      441 files from Claude Code, Codex CLI, Cursor
+  ✗ leaks     3 secrets in the logs, 2 critical
+              → spillage   (rotate them, then: spillage scrub)
+  ✓ settings  no keys in plain text in agent settings
+  ✗ guard     hooks are off for Codex CLI
+              → spillage guard install
+  ✓ env       looking for 12 values from your projects' .env files
+  ✓ repo      no agent transcripts committed in this repository
+
+  2 to fix. Run this again when you are done.
+```
+
+It exits with `1` while something is open. `spillage doctor -f json` gives the same as data.
 
 <a id="reports"></a>
 
