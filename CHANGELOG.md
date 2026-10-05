@@ -7,6 +7,11 @@
 - agent settings are scanned too (`--agent config`): MCP server definitions in `~/.claude.json`, `.mcp.json`, Cursor, Claude Desktop, Codex `config.toml`, Gemini, Qwen, Windsurf, VS Code, Cline/Roo/Kilo, OpenCode, Crush, Goose and Continue, Claude Code's allowed commands (an approved `curl -H "Authorization: …"` keeps the key in `settings.local.json`) and the old per-project prompt history in `~/.claude.json`. Claude Code's own login is left out, unless the same key also turns up somewhere else in the file. `scrub` leaves the MCP servers and commands alone and says to move the key into an environment variable instead; prompts in that old history do get redacted ([#47](https://github.com/maximilianfeix/spillage/issues/47))
 - `spillage repo` and the `spillage` pre-commit hook check committed `.mcp.json`, `.claude/settings*.json` and friends; they don't count as transcripts, so `--strict` doesn't fail on a clean one
 
+### Fixed
+- Windows: `guard` didn't recognise its own hooks when they run through `spillage.exe`, so every `guard install` added them again, `guard uninstall` left them in place and `guard status` reported them missing. Running `guard install` once more cleans up the duplicates
+- Windows: output piped or redirected (`spillage > report.txt`, CI logs, the `python -m spillage` hook fallback) crashed on the first ✓, since Windows writes those in cp1252. It's UTF-8 now, and a console that can't show a symbol gets a `?`
+- tests run on Windows in CI, next to Linux and macOS
+
 ## [0.6.9] - 2026-09-28
 
 ### Fixed

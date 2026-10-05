@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -31,7 +32,8 @@ class FakeHome:
         self.secrets: dict = {}
 
     def claude_session(self, name="s1", project="/work/app", records=None) -> Path:
-        path = self.root / ".claude" / "projects" / project.replace("/", "-") / f"{name}.jsonl"
+        folder = re.sub(r"[^A-Za-z0-9]", "-", project)  # how Claude Code names it: C:\work\app -> C--work-app
+        path = self.root / ".claude" / "projects" / folder / f"{name}.jsonl"
         base = {"sessionId": name, "cwd": project, "timestamp": "2026-09-20T10:00:00Z"}
         return write_jsonl(path, [dict(base, **r) for r in (records or [])])
 

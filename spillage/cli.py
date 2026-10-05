@@ -125,7 +125,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _fix_output_encoding() -> None:
+    """Windows writes pipes and redirects in cp1252, which has no ✓ or ●. Reports and pipes get
+    UTF-8; a console that can't show a symbol gets a ? instead of a crash."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            "✓●".encode(stream.encoding or "ascii")
+        except (UnicodeEncodeError, LookupError):
+            try:
+                tty = stream.isatty()
+                stream.reconfigure(**({"errors": "replace"} if tty else {"encoding": "utf-8"}))
+            except (AttributeError, OSError, ValueError):
+                pass  # not a regular text stream; leave it alone
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    _fix_output_encoding()
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     commands = {"scan", "scrub", "check", "guard", "hook", "repo", "watch", "agents", "rules", "ignore"}

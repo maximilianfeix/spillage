@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
+import sys
 import time
 
 import fakes
@@ -145,3 +148,14 @@ def test_ellipsize():
     short = ellipsize(path, 60)
     assert len(short) == 60 and "…" in short and short.endswith(".jsonl:12") and short.startswith("~/.claude")
     assert ellipsize("short", 60) == "short"
+
+
+def test_output_survives_a_legacy_encoding(tmp_path):
+    # Windows pipes and redirects default to cp1252, which has no ✓ or ●
+    env = dict(os.environ, PYTHONIOENCODING="cp1252", HOME=str(tmp_path), USERPROFILE=str(tmp_path))
+    proc = subprocess.run(
+        [sys.executable, "-m", "spillage", "check"], input=b"nothing to see here",
+        capture_output=True, env=env, cwd=tmp_path, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "no secrets" in proc.stdout.decode("utf-8")

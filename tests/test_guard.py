@@ -116,7 +116,8 @@ def test_install_into_empty_settings(tmp_path):
     path = tmp_path / "settings.json"
     assert guard.install(path)
     data = json.loads(path.read_text())
-    assert "spillage hook prompt" in data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    command = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert guard.is_hook_command(command) and command.endswith("hook prompt")
     assert data["hooks"]["PreToolUse"][0]["matcher"] == guard.TOOL_MATCHER
     assert guard.status(path) == {"UserPromptSubmit": True, "PreToolUse": True, "SessionEnd": True}
     assert "session-end" in data["hooks"]["SessionEnd"][0]["hooks"][0]["command"]
@@ -294,6 +295,35 @@ def test_hook_command_prefers_the_launcher(monkeypatch, tmp_path):
     monkeypatch.setattr(guard.shutil, "which", lambda name: None)
     assert guard.hook_command("tool").endswith("-m spillage hook tool")
     assert guard.MARK in guard.hook_command("tool")
+
+
+@pytest.mark.parametrize("command", [
+    "spillage hook prompt",
+    "/opt/homebrew/bin/spillage hook tool",
+    '"/Users/me/bin with space/spillage" hook session-end',
+    "/usr/bin/python3 -m spillage hook prompt",
+    r"C:\Python314\Scripts\spillage.exe hook prompt",
+    r'"C:\Program Files\Python314\Scripts\spillage.exe" hook tool',
+    r'"C:\Program Files\Python314\python.exe" -m spillage hook session-end',
+])
+def test_hook_commands_are_recognised(command):
+    assert guard.is_hook_command(command)
+
+
+@pytest.mark.parametrize("command", ["echo spillage", "my-spillage hook prompt", "spillage scan", "npx prettier"])
+def test_other_commands_are_not_ours(command):
+    assert not guard.is_hook_command(command)
+
+
+def test_windows_launcher_install_is_idempotent(tmp_path, monkeypatch):
+    launcher = r"C:\Python314\Scripts\spillage.exe"
+    monkeypatch.setattr(guard, "hook_command", lambda event: f"{launcher} hook {event}")
+    path = tmp_path / "settings.json"
+    assert guard.install(path)
+    assert not guard.install(path)
+    assert all(guard.status(path).values())
+    assert guard.uninstall(path)
+    assert json.loads(path.read_text()) == {}
 
 
 def test_install_warns_when_the_hook_cannot_run(home, capsys, monkeypatch):

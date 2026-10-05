@@ -39,7 +39,7 @@ def test_env_files_skip_templates(tmp_path):
     (tmp_path / "api" / ".env").write_text("A=1")
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / ".env").write_text("A=1")
-    names = sorted(str(p.relative_to(tmp_path)) for p in env_files([tmp_path]))
+    names = sorted(p.relative_to(tmp_path).as_posix() for p in env_files([tmp_path]))
     assert names == [".env", ".env.local", "api/.env"]
 
 
