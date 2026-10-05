@@ -72,3 +72,10 @@ def test_html_format_without_the_cli():
     code = "from spillage.reporters import formats; print(formats())"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60).stdout
     assert "html" in out
+
+
+def test_hidden_elements_stay_hidden():
+    # `.legend { display: flex }` used to win over the hidden attribute, which left
+    # "Nothing matches." under a full list of findings
+    page = render_html(ScanResult([], ScanStats(files=1)))
+    assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important", page)
