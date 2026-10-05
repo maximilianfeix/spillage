@@ -40,6 +40,7 @@ flowchart LR
 | `guard.py` | Hook handlers (pure `handle(event, payload) -> (code, message)`) and per-agent config writers described by an `AgentHooks` record. | Data-driven config |
 | `watch.py` | Polls logs, reads appended bytes, reuses `Document` and the rules. | |
 | `repo.py` | Maps tracked files to agents and reuses the matching adapter's knowledge through a small wrapper. | **Decorator** around a `Source` |
+| `repo_output.py` | Turns a repo scan into SARIF, Markdown, and GitHub annotations with a job summary. | |
 
 ## Rules of the road
 

@@ -143,23 +143,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _fix_output_encoding()
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    commands = {"scan", "scrub", "check", "guard", "hook", "repo", "watch", "agents", "rules", "ignore"}
-    if not argv or (argv[0] not in commands and argv[0] not in ("-h", "--help", "-V", "--version")):
+    if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help", "-V", "--version")):
         argv = ["scan"] + argv
     args = parser.parse_args(argv)
     try:
-        return {
-            "scan": cmd_scan,
-            "scrub": cmd_scrub,
-            "guard": cmd_guard,
-            "repo": cmd_repo,
-            "watch": cmd_watch,
-            "hook": lambda a: guard.run_hook(a.event),
-            "check": cmd_check,
-            "agents": cmd_agents,
-            "rules": cmd_rules,
-            "ignore": cmd_ignore,
-        }[args.command](args)
+        return COMMANDS[args.command](args)
     except ValueError as exc:
         print(f"spillage: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -373,6 +361,7 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
 
 
 def cmd_repo(args: argparse.Namespace) -> int:
+    from . import repo_output
     from .repo import REPO_IGNORE, scan_repo
 
     root = args.path.resolve()
@@ -382,7 +371,7 @@ def cmd_repo(args: argparse.Namespace) -> int:
     failed = bool(findings) or strict_fail
     rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
     if args.sarif or args.format == "sarif":
-        sarif = _repo_sarif(result, root, args.strict)
+        sarif = repo_output.sarif(result, root, args.strict)
         if args.sarif:
             args.sarif.write_text(sarif + "\n", encoding="utf-8")
         if args.format == "sarif":
@@ -399,11 +388,11 @@ def cmd_repo(args: argparse.Namespace) -> int:
         return EXIT_FOUND if failed else EXIT_CLEAN
 
     if args.format in ("markdown", "github"):
-        md = _repo_markdown(result, rel)
+        md = repo_output.markdown(result, rel)
         if args.format == "markdown":
             print(md)
         else:
-            _github_output(result, root, args.strict, md)
+            repo_output.github(result, root, args.strict, md)
         return EXIT_FOUND if failed else EXIT_CLEAN
 
     p = Painter(not args.no_color and supports_color(sys.stdout))
@@ -430,99 +419,6 @@ def cmd_repo(args: argparse.Namespace) -> int:
                 "Remove them from git and add them to .gitignore.", "red"))
     print()
     return EXIT_FOUND if failed else EXIT_CLEAN
-
-
-def _repo_sarif(result, root: Path, strict: bool) -> str:
-    """SARIF for code scanning. With --strict, committed transcripts are alerts too, so a run that
-    fails on them explains why in the Security tab."""
-    ws = _workspace_relative(root)
-    sarif = render(result.scan, "sarif", uri=ws)
-    if not (strict and result.transcripts):
-        return sarif
-    data = json.loads(sarif)
-    run = data["runs"][0]
-    run["tool"]["driver"]["rules"].append({
-        "id": "committed-transcript",
-        "shortDescription": {"text": "Agent transcript committed"},
-        "fullDescription": {"text": "A coding agent's chat log is tracked by git; anyone who can read the repo "
-                                    "can read the conversation."},
-        "helpUri": "https://github.com/maximilianfeix/spillage#repo",
-        "defaultConfiguration": {"level": "error"},
-        "properties": {"tags": ["security"], "precision": "very-high", "security-severity": "5.0"},
-    })
-    for path, agent in sorted(result.transcripts.items()):
-        uri = ws(root / path)
-        run["results"].append({
-            "ruleId": "committed-transcript",
-            "level": "error",
-            "message": {"text": f"{agent_label(agent)} transcript is committed. Remove it from git and add it "
-                                "to .gitignore."},
-            "locations": [{"physicalLocation": {"artifactLocation": {"uri": uri}}}],
-            "partialFingerprints": {"spillageTranscript/v1": uri},
-        })
-    return json.dumps(data, indent=2, ensure_ascii=False)
-
-
-def _workspace_relative(root: Path):
-    """Paths the way GitHub resolves them: relative to the checkout (GITHUB_WORKSPACE), or to the
-    repository when run outside Actions."""
-    base = Path(os.environ.get("GITHUB_WORKSPACE") or root).resolve()
-
-    def ws(path) -> str:
-        try:
-            return os.path.relpath(Path(path).resolve(), base).replace(os.sep, "/")
-        except ValueError:  # another drive on Windows
-            return str(path)
-
-    return ws
-
-
-def _github_output(result, root: Path, strict: bool, md: str) -> None:
-    """Annotations (paths relative to the workspace, which is what GitHub resolves them
-    against), the job summary, and step outputs."""
-    ws = _workspace_relative(Path.cwd())
-
-    transcripts = {str((root / r).resolve()) for r in result.transcripts}
-    for f in result.findings:
-        for loc in f.locations:
-            line = f",line={loc.line}" if loc.line else ""
-            rotate = f" Rotate it: {f.rotate_url}" if f.rotate_url else ""
-            in_transcript = str(Path(loc.file).resolve()) in transcripts
-            where = "a committed agent transcript" if in_transcript else "a committed file"
-            print(f"::error file={ws(loc.file)}{line},title=spillage: {f.rule_name}::"
-                  f"{f.rule_name} ({f.masked}, {f.fingerprint}) is in {where}.{rotate}")
-    if strict:
-        for path, agent in result.transcripts.items():
-            print(f"::warning file={ws(root / path)},title=spillage: agent transcript::"
-                  f"{agent_label(agent)} transcript is committed. Add it to .gitignore.")
-    for name, value in (("GITHUB_STEP_SUMMARY", md + "\n"),
-                        ("GITHUB_OUTPUT", f"transcripts={len(result.transcripts)}\nsecrets={len(result.findings)}\n")):
-        target = os.environ.get(name)
-        if target:
-            with open(target, "a", encoding="utf-8") as fh:
-                fh.write(value)
-    print(f"spillage: {len(result.transcripts)} transcript(s), {len(result.findings)} secret(s)")
-
-
-def _repo_markdown(result, rel) -> str:
-    out = ["## spillage", ""]
-    if not result.transcripts and not result.findings:
-        return "\n".join(out + ["No agent transcripts committed. ✅"])
-    if result.transcripts:
-        out += [f"**{len(result.transcripts)} agent transcript(s) committed:**", ""]
-        out += [f"- `{path}` ({agent_label(agent)})" for path, agent in sorted(result.transcripts.items())[:50]]
-        out.append("")
-    if result.findings:
-        out += ["| Severity | What | Masked | Where | Rotate |", "| --- | --- | --- | --- | --- |"]
-        for f in result.findings:
-            loc = f.locations[0]
-            where = f"`{rel(loc.file)}:{loc.line}`" + (f" +{len(f.locations) - 1}" if len(f.locations) > 1 else "")
-            rotate = f"[rotate]({f.rotate_url})" if f.rotate_url else ""
-            out.append(f"| {f.severity.label} | {f.rule_name} | `{f.masked}` | {where} | {rotate} |")
-        out += ["", "Rotate these keys: the repo history keeps them even after the file is deleted."]
-    else:
-        out.append("No secrets in them.")
-    return "\n".join(out)
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -572,6 +468,21 @@ def cmd_ignore(args: argparse.Namespace) -> int:
     print(f"spillage: ignoring {len(args.fingerprints)} fingerprint(s) via {short_path(str(path))}")
     return EXIT_CLEAN
 
+
+# every command, by name: what `main` dispatches on, and what decides whether the first argument
+# is a command or belongs to the default `scan`
+COMMANDS = {
+    "scan": cmd_scan,
+    "scrub": cmd_scrub,
+    "guard": cmd_guard,
+    "repo": cmd_repo,
+    "watch": cmd_watch,
+    "hook": lambda args: guard.run_hook(args.event),
+    "check": cmd_check,
+    "agents": cmd_agents,
+    "rules": cmd_rules,
+    "ignore": cmd_ignore,
+}
 
 __all__ = ["agent_label", "build_parser", "default_ignore_file", "main", "parse_since"]
 
