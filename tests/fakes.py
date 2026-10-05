@@ -259,3 +259,47 @@ def stripe_webhook() -> str:
 def slack_app() -> str:
     app = rand(10, string.ascii_uppercase + string.digits)
     return "xapp" + "-1-A" + app + "-" + rand(13, string.digits) + "-" + rand(64, HEX)
+
+
+def huggingface_org() -> str:
+    return "api" + "_org_" + rand(34, string.ascii_letters)
+
+
+def clojars() -> str:
+    return "CLO" + "JARS_" + rand(60, string.ascii_lowercase + string.digits)
+
+
+def duffel() -> str:
+    return "duffel" + "_live_" + rand(43, ALNUM + "-_")
+
+
+def easypost(test: bool = False) -> str:
+    return ("EZ" + "TK" if test else "EZ" + "AK") + rand(54)
+
+
+def frameio() -> str:
+    return "fio" + "-u-" + rand(64, ALNUM + "-_")
+
+
+def infracost() -> str:
+    return "ico" + "-" + rand(32)
+
+
+def prefect() -> str:
+    return "pnu" + "_" + rand(36)
+
+
+def readme_key() -> str:
+    return "rdme" + "_" + rand(70, string.ascii_lowercase + string.digits)
+
+
+def scalingo() -> str:
+    return "tk" + "-us-" + rand(48, ALNUM + "-_")
+
+
+def cloudflare_origin_ca() -> str:
+    return "v1" + ".0-" + rand(24, HEX) + "-" + rand(146, HEX)
+
+
+def gitlab_agent() -> str:
+    return "gl" + "agent-" + rand(50, ALNUM + "-_")

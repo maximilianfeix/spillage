@@ -505,7 +505,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "tailscale-key", "Tailscale key", "Tailscale",
-        r"(tskey-(?:auth|api|client)-[A-Za-z0-9]{10,24}-[A-Za-z0-9]{20,64})" + _E,
+        r"(tskey-[a-z]{2,12}-[A-Za-z0-9_]{6,32}-[A-Za-z0-9_]{16,80})(?![A-Za-z0-9_])",
         Severity.HIGH, ("tskey-",), "https://login.tailscale.com/admin/settings/keys", group=1,
     ),
     Rule(
@@ -550,7 +550,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "bitbucket-app-password", "Bitbucket app password", "Bitbucket",
-        r"(ATBB[A-Za-z0-9]{32})" + _E,
+        r"(ATBB[A-Za-z0-9_\-=]{28,40})(?![A-Za-z0-9_\-=])",
         Severity.HIGH, ("ATBB",), "https://bitbucket.org/account/settings/app-passwords/", group=1, min_entropy=3.5,
     ),
     Rule(
@@ -580,7 +580,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "square-token", "Square access token or application secret", "Square",
-        r"(sq0atp-[A-Za-z0-9_\-]{22}|sq0csp-[A-Za-z0-9_\-]{43})" + _E,
+        r"(sq0atp-[A-Za-z0-9_\-]{22,60}|sq0csp-[A-Za-z0-9_\-]{43})" + _E,
         Severity.CRITICAL, ("sq0atp-", "sq0csp-"), "https://developer.squareup.com/apps", group=1,
     ),
     Rule(
@@ -590,8 +590,64 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "slack-app-token", "Slack app-level token", "Slack",
-        r"(xapp-\d-[A-Z0-9]{8,14}-\d{10,14}-[a-f0-9]{64})" + _E,
+        r"(xapp-\d-[A-Z0-9]{6,20}-\d{6,20}-[a-z0-9]{24,128})" + _E,
         Severity.HIGH, ("xapp-",), "https://api.slack.com/apps", group=1,
+    ),
+    # the formats below are the ones in the gitleaks default rules
+    Rule(
+        "huggingface-org-token", "Hugging Face organisation token", "Hugging Face",
+        r"(api_org_[A-Za-z]{34})" + _E,
+        Severity.HIGH, ("api_org_",), "https://huggingface.co/settings/tokens", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "clojars-token", "Clojars deploy token", "Clojars",
+        r"(CLOJARS_[a-z0-9]{60})" + _E,
+        Severity.HIGH, ("CLOJARS_",), "https://clojars.org/tokens", group=1,
+    ),
+    Rule(
+        "duffel-token", "Duffel API token", "Duffel",
+        r"(duffel_(?:test|live)_[A-Za-z0-9_\-=]{43})(?![A-Za-z0-9_\-=])",
+        Severity.HIGH, ("duffel_",), "https://app.duffel.com", group=1,
+    ),
+    Rule(
+        "easypost-api-key", "EasyPost API key", "EasyPost",
+        r"(EZ[AT]K[A-Za-z0-9]{54})" + _E,
+        Severity.HIGH, ("EZAK", "EZTK"), "https://www.easypost.com/account/api-keys", group=1,
+    ),
+    Rule(
+        "frameio-token", "Frame.io API token", "Frame.io",
+        r"(fio-u-[A-Za-z0-9_\-=]{64})(?![A-Za-z0-9_\-=])",
+        Severity.HIGH, ("fio-u-",), "https://developer.frame.io/app/tokens", group=1,
+    ),
+    Rule(
+        "infracost-token", "Infracost API token", "Infracost",
+        r"(ico-[A-Za-z0-9]{32})" + _E,
+        Severity.MEDIUM, ("ico-",), "https://dashboard.infracost.io", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "prefect-token", "Prefect API token", "Prefect",
+        r"(pnu_[A-Za-z0-9]{36})" + _E,
+        Severity.HIGH, ("pnu_",), "https://app.prefect.cloud/my/api-keys", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "readme-api-key", "ReadMe API key", "ReadMe",
+        r"(rdme_[a-z0-9]{70})" + _E,
+        Severity.HIGH, ("rdme_",), "https://dash.readme.com", group=1,
+    ),
+    Rule(
+        "scalingo-token", "Scalingo API token", "Scalingo",
+        r"(tk-us-[A-Za-z0-9_\-]{48})" + _E,
+        Severity.HIGH, ("tk-us-",), "https://dashboard.scalingo.com/account/tokens", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "cloudflare-origin-ca-key", "Cloudflare Origin CA key", "Cloudflare",
+        r"(v1\.0-[a-f0-9]{24}-[a-f0-9]{146})" + _E,
+        Severity.HIGH, ("v1.0-",), "https://dash.cloudflare.com/profile/api-tokens", group=1,
+    ),
+    Rule(
+        "gitlab-agent-token", "GitLab Kubernetes agent token", "GitLab",
+        r"(glagent-[A-Za-z0-9_\-]{50})" + _E,
+        Severity.HIGH, ("glagent-",), "https://docs.gitlab.com/user/clusters/agent/", group=1, min_entropy=3.5,
     ),
     # ---- Payments and SaaS ---------------------------------------------------------------
     StripeRule(

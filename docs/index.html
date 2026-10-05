@@ -199,7 +199,7 @@ footer a { color: var(--paper); }
           <tr><th scope="row">Keys already in the logs</th><td>Found, with the session, the project and whether you, a tool or the model wrote them</td><td>Found as plain text, without the conversation around them</td><td>Not covered, it scans sessions as they happen</td></tr>
           <tr><th scope="row">Cleaning up</th><td>Redacts in place, <code>--resume</code> keeps working</td><td>No</td><td>No</td></tr>
           <tr><th scope="row">Blocking the next one</th><td>Hooks for Claude Code, Codex and Gemini CLI</td><td>pre-commit, not inside the agent</td><td>Hooks for Cursor, Claude Code, Codex, Copilot CLI and more</td></tr>
-          <tr><th scope="row">Detection</th><td>76 rules plus the exact values from your <code>.env</code> files</td><td>Hundreds of detectors; TruffleHog also tests whether a key is live</td><td>600+ secret types</td></tr>
+          <tr><th scope="row">Detection</th><td>87 rules plus the exact values from your <code>.env</code> files</td><td>Hundreds of detectors; TruffleHog also tests whether a key is live</td><td>600+ secret types</td></tr>
           <tr><th scope="row">Account and network</th><td>None</td><td>None for gitleaks; TruffleHog calls the provider to verify</td><td>GitGuardian account, scans go through its API</td></tr>
         </tbody>
       </table>
@@ -213,7 +213,7 @@ footer a { color: var(--paper); }
       <p><b>No dependencies</b>Standard-library Python 3.9 and up. Nothing to audit but the code.</p>
       <p><b>No network</b>No telemetry, no update check, no key validation calls.</p>
       <p><b>Few false alarms</b>Checksums for GitHub tokens, decodable JWTs, placeholder filtering.</p>
-      <p><b>76 rules</b>Including the AI stack gitleaks doesn't cover: Claude Code OAuth, Supabase, LangSmith, Pinecone.</p>
+      <p><b>87 rules</b>Including the AI stack gitleaks doesn't cover: Claude Code OAuth, Supabase, LangSmith, Pinecone.</p>
       <p><b>Fast</b>About 240 MB of real agent history in under 4 seconds on a laptop.</p>
       <p><b>MIT licensed</b>Issues and new rules welcome.</p>
     </div>
