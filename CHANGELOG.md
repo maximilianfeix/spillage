@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05
+
 ### Added
 - `spillage doctor`: one screen for where you stand. Secrets in the logs, keys in agent settings, whether the guard hooks are on for every installed agent, the values it watches from your `.env` files, and transcripts committed in the current repository, each with the command that fixes it. Exits 1 while something is open; `-f json` for scripts ([#64](https://github.com/maximilianfeix/spillage/issues/64))
 - `spillage completions bash|zsh|fish` prints a tab-completion script with every command, option and choice, generated from the argument parser ([#62](https://github.com/maximilianfeix/spillage/issues/62))
@@ -12,11 +14,14 @@
 - `spillage repo` and the `spillage` pre-commit hook check committed `.mcp.json`, `.claude/settings*.json` and friends; they don't count as transcripts, so `--strict` doesn't fail on a clean one
 
 ### Fixed
+- HTML report: "Nothing matches." was always shown under the findings; it only appears when the filters hide all of them ([#55](https://github.com/maximilianfeix/spillage/issues/55))
 - Windows: `guard` didn't recognise its own hooks when they run through `spillage.exe`, so every `guard install` added them again, `guard uninstall` left them in place and `guard status` reported them missing. Running `guard install` once more cleans up the duplicates
 - Windows: output piped or redirected (`spillage > report.txt`, CI logs, the `python -m spillage` hook fallback) crashed on the first ✓, since Windows writes those in cp1252. It's UTF-8 now, and a console that can't show a symbol gets a `?`
 - tests run on Windows in CI, next to Linux and macOS
 
 ### Changed
+- README and website compare spillage with gitleaks, TruffleHog and ggshield's AI hooks, and the README shows the HTML report ([#50](https://github.com/maximilianfeix/spillage/issues/50), [#49](https://github.com/maximilianfeix/spillage/issues/49))
+- the animated demo starts on a finished scan instead of an empty terminal, and shows only that with reduced motion
 - CodeQL runs on every push and pull request, spillage scans its own repository in CI, and pushing a version tag builds the package and publishes the release with its changelog section ([#1](https://github.com/maximilianfeix/spillage/issues/1))
 - the renderers for `spillage repo` moved from `cli.py` into `repo_output.py`; no change in behaviour ([#60](https://github.com/maximilianfeix/spillage/issues/60))
 
