@@ -116,6 +116,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="also write a SARIF report here, e.g. for github/codeql-action/upload-sarif")
     repo.add_argument("--no-color", action="store_true", help="plain output")
 
+    doctor = sub.add_parser("doctor", help="where you stand: leaks, settings, guard hooks, this repo")
+    doctor.add_argument("-f", "--format", choices=["text", "json"], default="text", help="output format")
+    doctor.add_argument("--no-color", action="store_true", help="plain output")
+
     sub.add_parser("agents", help="show which agents' logs were found and where")
     sub.add_parser("rules", help="list the detection rules")
 
@@ -449,6 +453,38 @@ def cmd_check(args: argparse.Namespace) -> int:
     return EXIT_FOUND if findings else EXIT_CLEAN
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from . import doctor
+
+    to_terminal = args.format == "text"
+    scan_args = build_parser().parse_args(["scan"])
+    result = run_scan(scan_args, Progress() if to_terminal else None)
+    try:
+        cwd: Optional[Path] = Path.cwd()
+    except OSError:  # the current folder was deleted
+        cwd = None
+    checks = doctor.run(result, Path.home(), cwd, load_ignore())
+    todo = [c for c in checks if c.state == doctor.TODO]
+    if args.format == "json":
+        print(json.dumps({"ok": not todo, "checks": [c.to_dict() for c in checks]}, indent=2, ensure_ascii=False))
+        return EXIT_FOUND if todo else EXIT_CLEAN
+
+    p = Painter(not args.no_color and supports_color(sys.stdout))
+    marks = {doctor.OK: p("✓", "green", "bold"), doctor.TODO: p("✗", "bright_red", "bold"), doctor.INFO: p("·", "dim")}
+    print(f"\n  {p('spillage doctor', 'bold')}\n")
+    for c in checks:
+        text = c.text if c.state != doctor.INFO else p(c.text, "dim")
+        print(f"  {marks[c.state]} {p(f'{c.name:<9}', 'bold')} {text}")
+        if c.fix and c.state != doctor.OK:
+            print(f"    {' ' * 9} {p('→', 'dim')} {p(c.fix, 'cyan')}")
+    print()
+    if todo:
+        print(f"  {p(str(len(todo)) + ' to fix.', 'bold')} {p('Run this again when you are done.', 'dim')}\n")
+    else:
+        print(f"  {p('All good.', 'green', 'bold')}\n")
+    return EXIT_FOUND if todo else EXIT_CLEAN
+
+
 def cmd_agents(args: argparse.Namespace) -> int:
     p = Painter(supports_color(sys.stdout))
     print()
@@ -502,6 +538,7 @@ COMMANDS = {
     "watch": cmd_watch,
     "hook": lambda args: guard.run_hook(args.event),
     "check": cmd_check,
+    "doctor": cmd_doctor,
     "agents": cmd_agents,
     "rules": cmd_rules,
     "completions": cmd_completions,
