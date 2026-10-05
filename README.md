@@ -18,7 +18,7 @@
 <a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
 <a href="#what-it-finds"><img src="https://img.shields.io/badge/57_rules-0E0F13?style=for-the-badge" alt="57 rules"></a>
 
-[Website](https://maximilianfeix.github.io/spillage/) · [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [How it works](#how-it-works) · [FAQ](#faq)
+[Website](https://maximilianfeix.github.io/spillage/) · [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [Compared](#compared) · [How it works](#how-it-works) · [FAQ](#faq)
 
 </div>
 
@@ -48,10 +48,11 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 - [Scrub](#scrub)
 - [Guard](#guard) · [Watch](#watch)
 - [Committed transcripts](#repo): GitHub Action, pre-commit
+- [Compared with gitleaks, TruffleHog and ggshield](#compared)
 - [How it works](#how-it-works)
 - [From Python](#from-python)
 - [FAQ](#faq)
-- [Roadmap](#roadmap) · [Contributing](#contributing)
+- [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing)
 
 </details>
 
@@ -177,6 +178,10 @@ spillage scan -f sarif                 # SARIF 2.1.0 for code scanning tools
 ```
 
 The HTML report is a single file with no CDN or web fonts, so it works offline and doesn't load anything. It shows the severity split, how the secrets got there, a timeline of when they first leaked, and every place each one was seen, with filters and search. Light and dark.
+
+<div align="center">
+<img src="docs/report.png" alt="The HTML report: three secrets spilled, how they got there, a timeline, and one card per key with a rotate link" width="860">
+</div>
 
 None of the formats ever contain a full secret. They show the first few characters and a fingerprint (the first 12 hex characters of the secret's SHA-256), which is also what `spillage ignore` takes.
 
@@ -306,6 +311,25 @@ repos:
       # - id: no-agent-transcripts # or block agent transcripts altogether
 ```
 
+<a id="compared"></a>
+
+## Compared with gitleaks, TruffleHog and ggshield
+
+Run them too. They are built for repositories and live sessions, spillage is built for what your agent already kept on your disk.
+
+| | spillage | gitleaks, TruffleHog | ggshield AI hooks |
+| --- | --- | --- | --- |
+| **Built for** | agent logs and settings on your machine | git repositories and their history | live agent sessions |
+| **Keys already in the logs** | found, with the session, the project and whether you, a tool or the model wrote them | found as plain text, without the conversation around them | not covered, it scans sessions as they happen |
+| **Cleaning up** | redacts in place, `--resume` keeps working | no | no |
+| **Blocking the next one** | hooks for Claude Code, Codex and Gemini CLI | pre-commit, not inside the agent | hooks for Cursor, Claude Code, Codex, Copilot CLI and more |
+| **Detection** | 57 rules plus the exact values from your `.env` files | hundreds of detectors; TruffleHog also tests whether a key is live | 600+ secret types |
+| **Account and network** | none | none for gitleaks; TruffleHog calls the provider to verify | GitGuardian account, scans go through its API |
+
+Where the others are ahead: far more detectors, live verification of keys (TruffleHog), and hooks for more tools (ggshield). If you only want to check that a few known keys are not in a folder you are about to publish, Simon Willison's [scan-for-secrets](https://github.com/simonw/scan-for-secrets) does exactly that.
+
+Sources: the [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](https://github.com/trufflesecurity/trufflehog) READMEs and GitGuardian's [AI coding tools docs](https://docs.gitguardian.com/ggshield-docs/integrations/ai-coding-tools/secret-scanning-for-ai-coding-tools), October 2026.
+
 <a id="how-it-works"></a>
 
 ## How it works
@@ -397,10 +421,18 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 
 ## Roadmap
 
-- [ ] [CI on all three operating systems](https://github.com/maximilianfeix/spillage/issues/1)
+- [x] [CI on all three operating systems](https://github.com/maximilianfeix/spillage/issues/1)
 - [x] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7)
 - [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
 - [ ] PyPI release
+
+<a id="community"></a>
+
+## Community
+
+- **Questions, ideas, a setup worth showing:** [Discussions](https://github.com/maximilianfeix/spillage/discussions)
+- **A key it missed or a false alarm:** [open an issue](https://github.com/maximilianfeix/spillage/issues/new/choose), with the masked value only
+- **If it found something on your machine,** a star helps the next person find it before their key does
 
 <a id="contributing"></a>
 
