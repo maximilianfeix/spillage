@@ -52,3 +52,12 @@ jobs:
           spillage --version
           spillage rules > /dev/null
           echo "nothing to see here" | spillage check
+
+  # spillage checks its own repository, the way the README tells others to
+  self-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          strict: true

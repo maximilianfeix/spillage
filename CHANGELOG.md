@@ -15,6 +15,10 @@
 - Windows: output piped or redirected (`spillage > report.txt`, CI logs, the `python -m spillage` hook fallback) crashed on the first ✓, since Windows writes those in cp1252. It's UTF-8 now, and a console that can't show a symbol gets a `?`
 - tests run on Windows in CI, next to Linux and macOS
 
+### Changed
+- CodeQL runs on every push and pull request, spillage scans its own repository in CI, and pushing a version tag builds the package and publishes the release with its changelog section ([#1](https://github.com/maximilianfeix/spillage/issues/1))
+- the renderers for `spillage repo` moved from `cli.py` into `repo_output.py`; no change in behaviour ([#60](https://github.com/maximilianfeix/spillage/issues/60))
+
 ## [0.6.9] - 2026-09-28
 
 ### Fixed
