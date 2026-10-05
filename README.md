@@ -301,7 +301,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.7.0
+      - uses: maximilianfeix/spillage@v0.8.0
         with:
           strict: true   # fail on any committed transcript
 ```
@@ -316,7 +316,7 @@ To see them in the **Security tab** and on pull requests too, have it write SARI
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.7.0
+      - uses: maximilianfeix/spillage@v0.8.0
         with:
           sarif: spillage.sarif
       - uses: github/codeql-action/upload-sarif@v3
@@ -333,7 +333,7 @@ Each secret becomes one alert per file, with the masked value, the fingerprint, 
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/maximilianfeix/spillage
-    rev: v0.7.0
+    rev: v0.8.0
     hooks:
       - id: spillage               # block transcripts that contain secrets
       # - id: no-agent-transcripts # or block agent transcripts altogether

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-05
+
 ### Added
 - 11 more rules, 87 in total, with the formats from the gitleaks default rules: Hugging Face organisation tokens, Clojars, Duffel, EasyPost, Frame.io, Infracost, Prefect, ReadMe, Scalingo, Cloudflare Origin CA keys and GitLab agent tokens ([#68](https://github.com/maximilianfeix/spillage/issues/68))
 
