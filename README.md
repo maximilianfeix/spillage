@@ -26,6 +26,8 @@
 
 Your coding agent writes down everything. Every `.env` it read, every key you pasted "just to test this one call", every `printenv` it ran to debug something. Claude Code, Codex, Gemini CLI, Cline and the rest keep those conversations on your disk as plain JSON, and every one of those keys was also sent to the model provider when it happened.
 
+The Claude Code docs say it themselves: *"Transcripts and history are not encrypted at rest. OS file permissions are the only protection. If a tool reads a `.env` file or a command prints a credential, that value is written to `projects/<project>/<session>.jsonl`."* ([source](https://code.claude.com/docs/en/claude-directory))
+
 **spillage** finds them. It reads the logs of thirteen coding agents, tells you which keys leaked, *how* they got there (you pasted it, a tool printed it, the model repeated it) and links you to the page where you rotate each one. Then it scrubs them from disk and installs hooks so the next one gets blocked before it's sent.
 
 <div align="center">
@@ -78,6 +80,16 @@ uvx --from git+https://github.com/maximilianfeix/spillage spillage
 ```
 
 Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, which seems fair for a tool you point at your secrets.
+
+### As a Claude Code plugin
+
+Only want the [guard hooks](#guard) in Claude Code? Then there is nothing to install besides the plugin. Inside Claude Code:
+
+```
+/plugin install spillage --marketplace maximilianfeix/spillage
+```
+
+It blocks prompts that contain a key, keeps the agent from reading `.env` files and printing secrets, and scrubs the transcript when a session ends. It runs from the plugin's own folder with the Python you already have (3.9 or newer). Scanning and scrubbing what is already in your logs needs the command line tool above; with it installed, use either the plugin or `spillage guard install`, not both.
 
 <a id="where-it-looks"></a>
 
@@ -251,12 +263,14 @@ Adds three hooks to **Claude Code**, **Codex CLI** and **Gemini CLI**:
 | Hook | Claude Code / Codex | Gemini CLI | What it does |
 | --- | --- | --- | --- |
 | prompt | `UserPromptSubmit` | `BeforeAgent` | Blocks a prompt that contains a key, before it's sent. Put `spillage:allow` in the prompt if you really mean it. |
-| tool | `PreToolUse` | `BeforeTool` | Blocks reading `.env` files, private keys and credential files (`.npmrc`, `.aws/credentials`, `*.pem`, …) and shell commands that would print secrets: `cat .env`, `printenv`, `gh auth token`, `security find-generic-password -w`, … The reason goes back to the model, so it asks you instead. `.env.example` and friends stay readable. |
+| tool | `PreToolUse` | `BeforeTool` | Blocks reading `.env` files, private keys and credential files (`.npmrc`, `.aws/credentials`, `*.pem`, …) and shell commands that would print secrets: `cat .env`, `printenv`, `echo $STRIPE_SECRET_KEY`, `gh auth token`, `security find-generic-password -w`, … in Bash and in PowerShell. The reason goes back to the model, so it asks you instead. `.env.example` and friends stay readable. |
 | session end | `SessionEnd` | `SessionEnd` | Scrubs the transcript of the session that just ended. |
 
 That last one exists because of something that came up while testing the first against the real Claude Code: **a blocked prompt still gets written into the session file.** It's never sent, but it ends up on disk as a `queue-operation` record. The session-end hook cleans that up, along with anything a tool printed that the other hook didn't catch.
 
 The config goes where each agent expects it: `~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/settings.json` (or the repo's folder with `--scope project`; `--scope local` exists only for Claude Code's `settings.local.json`). Gemini's settings may contain comments; they're read fine, but not written back, and the original is kept as a backup. Your other hooks and settings are left alone, a backup is kept the first time, and a file that isn't valid JSON is refused rather than overwritten. Each hook call takes about a tenth of a second.
+
+The hooks are a guard rail, not a sandbox. They stop the ways a key usually ends up in a conversation: the agent reads `.env` to "check the config", runs `printenv` to debug, or you paste a key. An agent that is set on reading a file will find a way the hooks don't know (`cp .env notes.txt`, then read that), so they don't replace keeping keys out of the folders your agent works in, and a real sandbox if you need one.
 
 > [!NOTE]
 > Codex runs new hooks only after you've trusted them once: open Codex and run `/hooks`. Claude Code and Codex were tested end to end with their real CLIs; Gemini CLI follows its documented hook format.
@@ -270,7 +284,7 @@ spillage watch                  # report new secrets the moment an agent writes 
 spillage watch --scrub          # and scrub the file once it's been quiet for 90 s
 ```
 
-Hooks only exist for Claude Code, Codex and Gemini. `watch` covers every agent, Cursor, Cline and Aider included: it keeps an eye on all their logs, reads only what was appended since the last look, and shows a desktop notification (macOS and Linux) plus a line in the terminal as soon as a key lands:
+Hooks only exist for Claude Code, Codex and Gemini. `watch` covers every agent, Cursor, Cline and Aider included: it keeps an eye on all their logs, reads only what was appended since the last look, and shows a desktop notification (macOS, Linux and Windows) plus a line in the terminal as soon as a key lands:
 
 ```
   09:12:53  [HIGH]     Firecrawl API key  fc-bcc…(35 chars)  Claude Code · ~/code/shop
@@ -402,6 +416,20 @@ scan_text("does this contain a key?")  # -> [] or a list of findings
 <br>
 
 No. There is no network code in it at all: no update check, no telemetry, and it doesn't test whether keys are still valid (that would mean sending them somewhere). It reads files, and only writes when you run `scrub`, `ignore` or `guard`.
+
+</details>
+
+<details>
+<summary><b>How do I know a release is what's in this repository?</b></summary>
+<br>
+
+From 0.9.0 on, every released file is built by the [release workflow](.github/workflows/release.yml) and carries a signed build attestation. With the GitHub CLI:
+
+```bash
+gh attestation verify spillage-0.9.0-py3-none-any.whl --repo maximilianfeix/spillage
+```
+
+It passes only for a file that this repository's workflow built from the tagged commit. The package has no dependencies, so that one file is everything that gets installed.
 
 </details>
 

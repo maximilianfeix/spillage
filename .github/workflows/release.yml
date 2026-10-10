@@ -1,7 +1,8 @@
 name: release
 
 # Pushing a tag like v0.7.0 builds the package, checks that the tag matches the version in the
-# code, and publishes a GitHub release with that version's section of the changelog.
+# code, publishes a GitHub release with that version's section of the changelog, and uploads
+# the same files to PyPI.
 on:
   push:
     tags: ["v*"]
@@ -14,16 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
 
       - name: Build
         run: |
-          pip install --quiet build
+          pip install --quiet build twine
           python -m build
+          twine check --strict dist/*
 
       - name: The tag matches the version
         run: |
@@ -38,7 +42,35 @@ jobs:
       - name: Release notes from the changelog
         run: python .github/release_notes.py "$VERSION" > notes.md
 
+      # `gh attestation verify <file> --repo maximilianfeix/spillage` proves a file was built here
+      - name: Attest the build
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/*
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+
+  # Trusted publishing: PyPI accepts the upload because it comes from this workflow in this
+  # repository, so there is no API token stored anywhere.
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/spillage/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
