@@ -1,0 +1,36 @@
+{
+  "description": "spillage guard: block prompts with keys, block reading secret files, scrub the transcript at session end",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for p in python3 python py; do \"$p\" -c \"import sys; sys.exit(sys.version_info < (3, 9))\" 2>/dev/null && exec \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/run.py\" prompt; done"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Bash|PowerShell|NotebookRead|mcp__.*read.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for p in python3 python py; do \"$p\" -c \"import sys; sys.exit(sys.version_info < (3, 9))\" 2>/dev/null && exec \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/run.py\" tool; done"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for p in python3 python py; do \"$p\" -c \"import sys; sys.exit(sys.version_info < (3, 9))\" 2>/dev/null && exec \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/run.py\" session-end; done"
+          }
+        ]
+      }
+    ]
+  }
+}
