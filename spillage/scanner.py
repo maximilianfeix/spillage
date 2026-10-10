@@ -16,7 +16,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .models import Finding, Hider, Location, Severity, fingerprint
 from .rules import Match, Rule, get_rules, rule_spec, rules_from_spec
-from .sources import MAX_FILE_BYTES, Source
+from .sources import MAX_FILE_BYTES, Source, is_database, kind_of
 
 ProgressFn = Callable[[int, int, str], None]  # jobs done, jobs total, current agent
 
@@ -247,10 +247,10 @@ class Scanner:
         # Biggest first, so the long jobs start early and the small ones fill the gaps.
         for source, path, size in sorted(jobs, key=lambda j: -j[2]):
             parts = 1
-            if path.suffix == ".jsonl" and (size > MAX_FILE_BYTES or (parallel and size > SPLIT_BYTES)):
+            if kind_of(path) == "jsonl" and (size > MAX_FILE_BYTES or (parallel and size > SPLIT_BYTES)):
                 # huge files are always read in parts, even without a pool
                 parts = max(-(-size // (MAX_FILE_BYTES // 2)), min(64, -(-size // SPLIT_BYTES)) if parallel else 1)
-            elif size > MAX_FILE_BYTES and type(source).load is Source.load:  # SQLite readers have no limit
+            elif size > MAX_FILE_BYTES and not is_database(path):  # a database is read row by row
                 stats.errors.append(f"{path}: skipped, larger than {MAX_FILE_BYTES // 2**20} MB")
             units.extend((source, path, i, parts) for i in range(parts))
         total = len(units)

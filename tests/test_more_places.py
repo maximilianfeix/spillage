@@ -163,3 +163,59 @@ def test_claude_desktop_from_the_microsoft_store(home):
     assert roaming in sources._app_support()
     (f,) = scan(["config"]).values()
     assert f.secret == key and f.origins == [Origin.CONFIG]
+
+
+def test_a_superseded_session_is_scrubbed_as_the_jsonl_it_is(home):
+    """Same care as for a live session: JSON stays valid and a signed thinking block is left alone."""
+    from spillage.scrub import scrub_file
+
+    key = fakes.github()
+    path = write_jsonl(home.root / ".claude" / "projects" / "-work-app" / "s1.jsonl.superseded-1760000000", [
+        {"type": "assistant", "message": {"content": [
+            {"type": "thinking", "thinking": f"the key is {key}", "signature": "x" * 300},
+            {"type": "text", "text": f"I use {key} and a line\nbreak"}]}}])
+    assert scrub_file(path) == 1
+    (record,) = (json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
+    assert record["message"]["content"][0]["thinking"] == f"the key is {key}"
+    assert key not in record["message"]["content"][1]["text"]
+
+
+def test_each_database_row_gets_its_own_session(home):
+    first, second = fakes.github(), fakes.npm()
+    database(home.root / ".codex" / "state_5.sqlite",
+             "CREATE TABLE other (thread_id TEXT, note TEXT); CREATE TABLE threads (id TEXT, first_user_message TEXT);",
+             [("INSERT INTO other VALUES (?, ?)", ("unrelated", "nothing")),
+              ("INSERT INTO threads VALUES (?, ?)", ("t1", f"use {first}")),
+              ("INSERT INTO threads VALUES (?, ?)", ("t2", f"use {second}"))])
+    found = scan(["codex"])
+    assert found[first].locations[0].session == "t1" and found[second].locations[0].session == "t2"
+
+
+def test_a_table_that_cant_be_read_does_not_hide_the_others(home):
+    key = fakes.github()
+    try:
+        db = database(home.root / ".copilot" / "session-store.db",
+                      "CREATE TABLE turns (session_id TEXT, user_message TEXT);"
+                      "CREATE VIRTUAL TABLE search_index USING fts5(content, tokenize='porter');",
+                      [("INSERT INTO turns VALUES (?, ?)", ("s1", f"use {key}"))])
+    except sqlite3.OperationalError:
+        pytest.skip("this SQLite has no FTS5")
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA writable_schema=ON")
+    conn.execute("UPDATE sqlite_master SET sql = 'CREATE VIRTUAL TABLE search_index USING nosuchmodule(x)' "
+                 "WHERE name = 'search_index'")
+    conn.commit()
+    conn.close()
+    assert set(scan(["copilot"])) == {key}
+
+
+def test_watch_leaves_the_databases_that_repeat_a_jsonl_file(home):
+    from spillage.watch import Watcher
+
+    home.codex_session(records=[])
+    database(home.root / ".codex" / "state_5.sqlite", "CREATE TABLE threads (id TEXT);")
+    database(home.root / ".local" / "share" / "opencode" / "opencode.db", "CREATE TABLE session (id TEXT);")
+    watcher = Watcher(build_sources(["codex", "opencode"]))
+    watcher.prime()
+    names = sorted(path.name for path in watcher.files)
+    assert names == ["opencode.db", "rollout-1.jsonl"]

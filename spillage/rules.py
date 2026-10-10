@@ -755,7 +755,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "slack-token", "Slack token", "Slack",
-        r"((?:xoxe\.)?xox[abcdeposr]-[0-9A-Za-z\-%]{10,250})" + _E,
+        r"((?:xoxe\.)?xox[abcdeposr]-[0-9A-Za-z\-]{10,250})" + _E,
         Severity.HIGH, ("xox",), "https://api.slack.com/apps",
         group=1, min_entropy=3.0,
     ),

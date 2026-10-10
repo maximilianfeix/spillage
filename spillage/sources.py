@@ -47,12 +47,14 @@ def _app_support() -> List[Path]:
         return [home / "Library" / "Application Support"]
     if os.name == "nt":
         appdata = os.environ.get("APPDATA")
-        roots = [Path(appdata)] if appdata else []
-        # apps from the Microsoft Store (Claude Desktop) get a private copy of %APPDATA%
         local = os.environ.get("LOCALAPPDATA")
-        if local:
-            roots += sorted(Path(local).glob("Packages/*/LocalCache/Roaming"))
-        return roots
+        if (appdata, local) not in _APP_SUPPORT:  # asked for by several adapters, on every discovery
+            roots = [Path(appdata)] if appdata else []
+            # apps from the Microsoft Store (Claude Desktop) get a private copy of %APPDATA%
+            if local:
+                roots += sorted(Path(local).glob("Packages/*/LocalCache/Roaming"))
+            _APP_SUPPORT[(appdata, local)] = roots
+        return list(_APP_SUPPORT[(appdata, local)])
     return [Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))]
 
 
@@ -61,6 +63,17 @@ DATABASE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".vscdb")
 
 def is_database(path: Path) -> bool:
     return path.suffix.lower() in DATABASE_SUFFIXES
+
+
+def kind_of(path: Path) -> str:
+    """"jsonl", "json" or "text". Claude Code's `s1.jsonl.superseded-<time>` is still JSONL."""
+    name = path.name.lower()
+    if name.endswith(".jsonl") or ".jsonl.superseded-" in name:
+        return "jsonl"
+    return "json" if name.endswith(".json") else "text"
+
+
+_APP_SUPPORT: Dict[tuple, List[Path]] = {}
 
 
 def _keys(path: JsonPath) -> set:
@@ -101,6 +114,11 @@ class Source:
 
     def installed(self) -> bool:
         return any(True for _ in self.discover())
+
+    def watched(self, path: Path) -> bool:
+        """Whether `watch` follows this file. False for a database that only repeats what the
+        same agent also appends to a JSONL file: it changes all the time and is read whole."""
+        return True
 
     # -- reading -------------------------------------------------------------------------
     def load(self, path: Path) -> Optional[str]:
@@ -192,7 +210,7 @@ class Document:
         self.source = source
         self.path = path
         self.text = text
-        self.kind = kind or {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
+        self.kind = kind or kind_of(path)
         self._parsed: Any = _UNSET
         self._first_state: Optional[dict] = None
         # set when this document is only one part of a big file
@@ -420,24 +438,32 @@ class SQLiteSource(Source):
         lines = []
         try:
             tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        except sqlite3.Error:
+            conn.close()
+            return None
+        try:
             for table in tables:
                 if table.startswith("sqlite_"):
                     continue
-                cur = conn.execute(f'SELECT * FROM "{table}"')
-                cols = [d[0] for d in cur.description]
-                for row in cur:
-                    lines.append(json.dumps(_sqlite_record(table, cols, row), ensure_ascii=False, default=str))
-        except sqlite3.Error:
-            # one table that can't be read (a virtual table of an extension we don't have) must
-            # not hide the rows of the others
-            if not lines:
-                return None
+                try:
+                    cur = conn.execute(f'SELECT * FROM "{table}"')
+                    cols = [d[0] for d in cur.description]
+                    for row in cur:
+                        lines.append(json.dumps(_sqlite_record(table, cols, row), ensure_ascii=False, default=str))
+                except sqlite3.Error:
+                    # a table that can't be read (a virtual table of an extension we don't have)
+                    # must not hide the rows of the others
+                    continue
         finally:
             conn.close()
         return "\n".join(lines) or None
 
     def document(self, path: Path, text: str) -> Document:
-        return Document(self, path, text, kind="jsonl" if is_database(path) else None)
+        if not is_database(path):
+            return Document(self, path, text)
+        doc = Document(self, path, text, kind="jsonl")
+        doc.first_line = ""  # every row stands for itself: the first one says nothing about the rest
+        return doc
 
     def update_state(self, record: Any, state: dict) -> None:
         if not isinstance(record, dict):
@@ -445,7 +471,7 @@ class SQLiteSource(Source):
         for key in ("session_id", "sessionId", "thread_id"):
             if isinstance(record.get(key), (str, int)):
                 state["session"] = str(record[key])
-        if record.get("table") == "sessions" and isinstance(record.get("id"), (str, int)):
+        if record.get("table") in ("sessions", "session", "threads") and isinstance(record.get("id"), (str, int)):
             state["session"] = str(record["id"])
         for key in ("working_dir", "cwd"):
             if isinstance(record.get(key), str):
@@ -528,9 +554,6 @@ class ClaudeCode(Source):
             return Origin.TOOL
         return Origin.OTHER
 
-    def document(self, path: Path, text: str) -> Document:
-        superseded = ".jsonl.superseded-" in path.name
-        return Document(self, path, text, kind="jsonl" if superseded else None)
 
 
 def _block_types(record: dict, path: JsonPath) -> set:
@@ -551,6 +574,9 @@ def _block_types(record: dict, path: JsonPath) -> set:
 class Codex(SQLiteSource):
     """Codex writes each session as a JSONL "rollout" and keeps copies of it in SQLite next to it:
     the thread history, the list of threads with their first prompt, and its own log."""
+
+    def watched(self, path: Path) -> bool:
+        return not is_database(path)
 
     name = "codex"
     label = "Codex CLI"
@@ -687,6 +713,9 @@ class Continue(Source):
 
 @register
 class CopilotCLI(SQLiteSource):
+
+    def watched(self, path: Path) -> bool:
+        return not is_database(path)
     name = "copilot"
     label = "GitHub Copilot CLI"
     patterns = (

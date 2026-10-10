@@ -59,6 +59,8 @@ def home(tmp_path, monkeypatch) -> FakeHome:
     monkeypatch.setenv("LOCALAPPDATA", str(root / "AppData" / "Local"))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CODEX_SQLITE_HOME", raising=False)
+    monkeypatch.delenv("COPILOT_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))
     monkeypatch.chdir(root)  # never scan the real working directory's project logs
     from spillage import sources

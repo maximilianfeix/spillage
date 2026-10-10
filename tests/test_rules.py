@@ -388,3 +388,8 @@ def test_the_whole_token_is_reported_so_the_whole_token_is_scrubbed():
 ])
 def test_lookalikes_of_the_newer_formats(text):
     assert ids(text) == []
+
+
+def test_a_slack_token_ends_where_the_url_encoding_starts():
+    token = fakes.slack()
+    assert secrets(f"token={token}%26channel%3DC0123%26text%3Dhi") == [token]
