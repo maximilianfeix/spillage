@@ -6,7 +6,7 @@ from typing import Any, Iterator, Tuple
 
 # Keys whose values are opaque blobs: thinking signatures, encrypted reasoning, base64 media.
 # Scanning them only produces noise and costs time.
-SKIP_KEYS = frozenset({"signature", "encrypted_content", "data", "image_url"})
+SKIP_KEYS = frozenset({"signature", "encrypted_content", "data", "image_url", "base64"})
 MAX_STRING = 2_000_000
 
 Path = Tuple[Any, ...]

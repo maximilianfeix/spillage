@@ -25,10 +25,10 @@ from .models import Finding, Location, fingerprint
 from .rules import Rule, get_rules
 from .scanner import Scanner, _lines_before, hits_in
 from .scrub import scrub_file
-from .sources import Source
+from .sources import DATABASE_SUFFIXES, Source, kind_of
 
 TAIL = 64  # bytes before the read offset that must stay the same, or the file was rewritten
-NOT_SCRUBBABLE = (".vscdb", ".db")
+NOT_SCRUBBABLE = DATABASE_SUFFIXES
 
 
 @dataclass
@@ -109,7 +109,7 @@ class Watcher:
     def _state_now(self, source: Source, path: Path) -> _FileState:
         st = path.stat()
         state = _FileState(source, st.st_ino, st.st_size, st.st_mtime)
-        if path.suffix == ".jsonl":
+        if kind_of(path) == "jsonl":
             state.offset = _last_line_end(path, st.st_size)
             state.tail = _read_range(path, max(0, state.offset - TAIL), state.offset)
             state.first_line = _first_line(path)
@@ -126,7 +126,7 @@ class Watcher:
             every = self.rediscover_slow if isinstance(source, (ProjectSource, Crush)) else self.rediscover
             last = self._discovered_at.get(i)
             if force or last is None or now - last >= every:
-                self._paths[i] = list(source.discover())
+                self._paths[i] = [path for path in source.discover() if source.watched(path)]
                 self._discovered_at[i] = now
             out += [(source, p) for p in self._paths[i]]
         return out
@@ -152,7 +152,7 @@ class Watcher:
             state = self.files[path] = _FileState(source)
         if (st.st_ino, st.st_size, st.st_mtime) == (state.ino, state.size, state.mtime):
             return []
-        if path.suffix == ".jsonl":
+        if kind_of(path) == "jsonl":
             hits = self._appended(source, path, state, st.st_ino, st.st_size)
         else:
             text = source.load(path)

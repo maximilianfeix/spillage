@@ -21,7 +21,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tupl
 from .models import Finding, Location, Origin, fingerprint
 from .rules import Rule, get_rules
 from .scanner import find_in_text
-from .sources import Source, decode_json_fragment, get_source, read_text_exact
+from .sources import Source, decode_json_fragment, get_source, is_database, kind_of, read_text_exact
 
 ACTIVE_SECONDS = 60
 
@@ -170,7 +170,7 @@ def scrub_file(
     text = read_exact(path)
     if not text:
         return 0
-    kind = {".jsonl": "jsonl", ".json": "json"}.get(path.suffix.lower(), "text")
+    kind = kind_of(path)
     is_json = kind != "text"
     skip = set(ignore)
     targets = set()
@@ -223,7 +223,7 @@ def scrub(
             if not fps:
                 continue
             leave = lambda loc: loc.origin != Origin.HISTORY  # noqa: E731
-        if path.suffix in (".vscdb", ".db"):
+        if is_database(path):
             report.failed.append((file, "can't scrub a database yet, delete the chat in the agent instead"))
             continue
         try:

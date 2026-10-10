@@ -171,3 +171,24 @@ def test_the_star_line_is_only_for_a_terminal(leaky_home):
     assert "A star helps" not in render(result, "text")  # a file, a pipe, CI
     for fmt in ("json", "markdown", "sarif", "html"):
         assert "A star helps" not in render(result, fmt, star=True)
+
+
+def test_a_path_that_is_not_there_is_an_error_and_not_a_clean_scan(home, capsys):
+    assert main(["scan", "--path", str(home.root / "nope")]) == 2
+    err = capsys.readouterr().err
+    assert "no such file or folder" in err and "nope" in err
+
+
+def test_a_report_that_cant_be_written_is_said_plainly(leaky_home, capsys):
+    target = leaky_home.root / "missing-folder" / "report.json"
+    assert main(["scan", "-f", "json", "-o", str(target)]) == 2
+    err = capsys.readouterr().err
+    assert "can't write the report" in err and "Traceback" not in err
+
+
+def test_workers_must_be_at_least_one(home, capsys):
+    import pytest
+
+    with pytest.raises(SystemExit) as stop:
+        main(["scan", "--workers", "0"])
+    assert stop.value.code == 2 and "must be 1 or more" in capsys.readouterr().err

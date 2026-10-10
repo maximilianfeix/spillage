@@ -145,3 +145,11 @@ def test_read_part_covers_the_file_exactly(tmp_path):
         assert "".join(p[0] for p in pieces) == "".join(lines)
         assert all(p[2] == lines[0] for p in pieces)
         assert all(not p[0] or p[0].endswith("\n") for p in pieces)
+
+
+def test_a_match_inside_a_base64_file_is_noise(home):
+    """Claude Code keeps an image it read as `toolUseResult.file.base64`; letters in there spell anything."""
+    blob = "BOCP8aUdeRQDR04oAM8ZoPtSUpJ78UgD/ADmjFIDnPvS9z65pgHJoxzR1pO+" + fakes.brave() + "/WgHjnpSAB+VIOO1KDik6j0oA"
+    home.claude_session(records=[
+        {"type": "user", "toolUseResult": {"file": {"base64": blob * 6}}, "message": {"role": "user", "content": "x"}}])
+    assert Scanner(workers=1).scan(build_sources(["claude"])).findings == []

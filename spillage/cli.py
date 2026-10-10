@@ -39,6 +39,13 @@ def _csv(value: str) -> List[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
+def _positive(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return number
+
+
 def _add_scan_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-a", "--agent", type=_csv, default=[], metavar="NAMES",
                         help="only these agents, comma separated (see `spillage agents`)")
@@ -50,7 +57,7 @@ def _add_scan_options(parser: argparse.ArgumentParser) -> None:
                         help="low, medium, high or critical (default: low)")
     parser.add_argument("--rules", type=_csv, metavar="IDS", help="only these rules")
     parser.add_argument("--skip-rules", type=_csv, metavar="IDS", help="leave out these rules")
-    parser.add_argument("--workers", type=int, metavar="N", help="parallel processes (default: up to 8)")
+    parser.add_argument("--workers", type=_positive, metavar="N", help="parallel processes (default: up to 8)")
     parser.add_argument("--no-env", action="store_true",
                         help="don't look for the values from your projects' .env files")
 
@@ -200,6 +207,9 @@ def build_rules(args: argparse.Namespace) -> list:
 
 def run_scan(args: argparse.Namespace, progress: Optional[Progress] = None) -> ScanResult:
     rules = build_rules(args)
+    for path in args.path:
+        if not path.expanduser().exists():  # an empty scan would read as "nothing spilled"
+            raise ValueError(f"no such file or folder: {path}")
     sources = build_sources(args.agent, args.path)
     scanner = Scanner(
         rules=rules,
@@ -224,7 +234,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
     report = render(result, args.format, color=color, verbose=args.verbose,
                     star=to_terminal and sys.stdout.isatty())
     if args.output:
-        args.output.write_text(report + ("" if report.endswith("\n") else "\n"), encoding="utf-8")
+        try:
+            args.output.write_text(report + ("" if report.endswith("\n") else "\n"), encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"can't write the report to {args.output}: {exc.strerror or exc}") from None
         print(f"spillage: wrote {args.format} report to {args.output} "
               f"({len(result.findings)} finding{'s' if len(result.findings) != 1 else ''})", file=sys.stderr)
     else:

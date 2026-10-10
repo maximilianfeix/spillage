@@ -124,7 +124,13 @@ def left_boundary_ok(text: str, start: int) -> bool:
     """
     if start == 0 or text[start - 1] not in _TOKEN_CHARS:
         return True
-    return start >= 2 and text[start - 2] == "\\" and text[start - 1] in "ntr"
+    if start >= 2 and text[start - 2] == "\\" and text[start - 1] in "ntr":
+        return True
+    # a terminal colour code right before it: ESC[32m, or \u001b[32m the way JSON writes it
+    return text[start - 1] == "m" and bool(_COLOUR_CODE.search(text, max(0, start - 24), start))
+
+
+_COLOUR_CODE = re.compile(r"(?:\x1b|\\u001[bB]|\\x1[bB]|\\033|\\e)\[[0-9;]*m$")
 
 
 @dataclass
@@ -198,6 +204,24 @@ class StripeRule(Rule):
 class JwtRule(Rule):
     def severity_for(self, secret: str) -> Severity:
         return Severity.LOW if jwt_is_public(secret) else Severity.MEDIUM
+
+    def candidates(self, text: str) -> Iterator[re.Match]:
+        """`finditer` would start again at every `eyJ` and read to the end of the run each time:
+        "eyJeyJeyJ…" took a second at 80 KB and four times that for every doubling. A token starts
+        at a boundary, so an `eyJ` in the middle of one is passed over without running the pattern."""
+        match_at = self._regex.match
+        pos = 0
+        while True:
+            start = text.find("eyJ", pos)
+            if start == -1:
+                return
+            if left_boundary_ok(text, start):
+                match = match_at(text, start)
+                if match:
+                    yield match
+                    pos = match.end()
+                    continue
+            pos = start + 3
 
 
 class DiscordBotRule(Rule):
@@ -417,9 +441,9 @@ BUILTIN_RULES: list = [
     # ---- Code hosting and package registries ---------------------------------------------
     Rule(
         "github-token", "GitHub token", "GitHub",
-        r"(gh[pousr]_[A-Za-z0-9]{36})" + _E,
+        r"(gh[pousr]_[A-Za-z0-9]{36}|ghr_[A-Za-z0-9]{37,255})" + _E,
         Severity.CRITICAL, ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"), "https://github.com/settings/tokens",
-        group=1, validator=github_checksum_ok,
+        group=1, validator=lambda s: github_checksum_ok(s) if len(s) == 40 else shannon_entropy(s) >= 4.0,
     ),
     Rule(
         "github-fine-grained-pat", "GitHub fine-grained token", "GitHub",
@@ -428,7 +452,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "gitlab-token", "GitLab token", "GitLab",
-        r"(glpat-[A-Za-z0-9_\-]{20,})" + _E,
+        r"(glpat-[A-Za-z0-9_\-]{20,}(?:\.[0-9a-z]{2}\.[0-9a-z]{7,12})?)" + _E,
         Severity.CRITICAL, ("glpat-",), "https://gitlab.com/-/user_settings/personal_access_tokens", group=1,
     ),
     Rule(
@@ -444,8 +468,8 @@ BUILTIN_RULES: list = [
     # ---- Cloud ---------------------------------------------------------------------------
     Rule(
         "aws-access-key-id", "AWS access key ID", "AWS",
-        r"((?:AKIA|ASIA)[0-9A-Z]{16})" + _E,
-        Severity.HIGH, ("AKIA", "ASIA"), "https://console.aws.amazon.com/iam/home#/security_credentials",
+        r"((?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16})" + _E,
+        Severity.HIGH, ("AKIA", "ASIA", "ABIA", "ACCA"), "https://console.aws.amazon.com/iam/home#/security_credentials",
         group=1, validator=lambda s: "EXAMPLE" not in s,
     ),
     AnchoredRule(
@@ -502,6 +526,79 @@ BUILTIN_RULES: list = [
         "docker-pat", "Docker Hub access token", "Docker",
         r"(dckr_pat_[A-Za-z0-9_\-]{27})" + _E,
         Severity.HIGH, ("dckr_pat_",), "https://app.docker.com/settings/personal-access-tokens", group=1,
+    ),
+    Rule(
+        "docker-org-token", "Docker organization access token", "Docker",
+        r"(dckr_oat_[A-Za-z0-9_\-]{32})" + _E,
+        Severity.HIGH, ("dckr_oat_",), "https://app.docker.com/settings/organization-access-tokens", group=1,
+    ),
+    # ---- formats that came up since: the stack around AI agents, from the Betterleaks and
+    # TruffleHog rules ------------------------------------------------------------------------
+    Rule(
+        "vercel-token", "Vercel token", "Vercel",
+        r"(vc[pikar]_[A-Za-z0-9_\-]{56})" + _E,
+        Severity.CRITICAL, ("vcp_", "vci_", "vck_", "vca_", "vcr_"), "https://vercel.com/account/settings/tokens",
+        group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "cloudflare-api-token", "Cloudflare API token", "Cloudflare",
+        r"(cf(?:ut|at|k|ast)_[A-Za-z0-9]{40}[a-f0-9]{8})" + _E,
+        Severity.CRITICAL, ("cfut_", "cfat_", "cfk_", "cfast_"), "https://dash.cloudflare.com/profile/api-tokens",
+        group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "supabase-access-token", "Supabase access token", "Supabase",
+        r"(sbp_[a-f0-9]{40})" + _E,
+        Severity.CRITICAL, ("sbp_",), "https://supabase.com/dashboard/account/tokens", group=1, min_entropy=3.0,
+    ),
+    Rule(
+        "brave-search-api-key", "Brave Search API key", "Brave",
+        r"(BSA[A-Za-z0-9_\-]{24,40})" + _E,
+        Severity.MEDIUM, ("BSA",), "https://api-dashboard.search.brave.com/app/keys", group=1, min_entropy=3.6,
+        # three letters are a weak prefix: BSAFETY_CHECK_… is a constant, a key mixes all three classes
+        validator=lambda s: all(any(test(c) for c in s[3:]) for test in (str.islower, str.isupper, str.isdigit)),
+    ),
+    Rule(
+        "aws-bedrock-api-key", "AWS Bedrock API key", "AWS",
+        r"(ABSK[A-Za-z0-9+/]{109,269}={0,2})" + _E,
+        Severity.CRITICAL, ("ABSK",), "https://console.aws.amazon.com/bedrock/home#/api-keys", group=1,
+        min_entropy=4.0,
+    ),
+    Rule(
+        "neon-api-key", "Neon API key", "Neon",
+        r"(napi_[A-Za-z0-9]{64})" + _E,
+        Severity.CRITICAL, ("napi_",), "https://console.neon.tech/app/settings/api-keys", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "together-api-key", "Together AI API key", "Together AI",
+        r"(tgp_v1_[A-Za-z0-9_\-]{43})" + _E,
+        Severity.HIGH, ("tgp_v1_",), "https://api.together.ai/settings/api-keys", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "cerebras-api-key", "Cerebras API key", "Cerebras",
+        r"(csk-[a-z0-9]{48})" + _E,
+        Severity.HIGH, ("csk-",), "https://cloud.cerebras.ai/platform", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "nvidia-api-key", "NVIDIA API key", "NVIDIA",
+        r"(nvapi-[A-Za-z0-9_\-]{60,70})" + _E,
+        Severity.HIGH, ("nvapi-",), "https://build.nvidia.com/settings/api-keys", group=1, min_entropy=3.5,
+    ),
+    Rule(
+        "langfuse-secret-key", "Langfuse secret key", "Langfuse",
+        r"(sk-lf-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})" + _E,
+        Severity.HIGH, ("sk-lf-",), "https://cloud.langfuse.com", group=1,
+    ),
+    Rule(
+        "wandb-api-key", "Weights & Biases API key", "Weights & Biases",
+        r"(wandb_v1_[A-Za-z0-9]{27}_[A-Za-z0-9]{49})" + _E,
+        Severity.HIGH, ("wandb_v1_",), "https://wandb.ai/authorize", group=1,
+    ),
+    Rule(
+        "gitlab-deploy-token", "GitLab deploy or runner token", "GitLab",
+        r"(gl(?:dt|rt)-[A-Za-z0-9_\-]{20,}|glptt-[a-f0-9]{40})" + _E,
+        Severity.HIGH, ("gldt-", "glrt-", "glptt-"), "https://docs.gitlab.com/security/tokens/", group=1,
+        min_entropy=3.3,
     ),
     Rule(
         "tailscale-key", "Tailscale key", "Tailscale",
@@ -658,7 +755,7 @@ BUILTIN_RULES: list = [
     ),
     Rule(
         "slack-token", "Slack token", "Slack",
-        r"(xox[abposr]-[0-9A-Za-z\-]{10,250})" + _E,
+        r"((?:xoxe\.)?xox[abcdeposr]-[0-9A-Za-z\-]{10,250})" + _E,
         Severity.HIGH, ("xox",), "https://api.slack.com/apps",
         group=1, min_entropy=3.0,
     ),

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spillage"
 dynamic = ["version"]
-description = "Keep API keys out of your coding agents: hooks that block the leak in Claude Code, Codex and Gemini CLI, a scan for what already leaked in the logs of 13 agents, and a scrub."
+description = "Keep API keys out of your coding agents: hooks that block the leak in Claude Code, Codex and Gemini CLI, a scan for what already leaked in the logs of 14 agents, and a scrub."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
