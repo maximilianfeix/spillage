@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/banner-light.svg">
-  <img src="docs/banner-dark.svg" alt="spillage – your coding agents spill secrets. Find them, scrub them, block the next one." width="100%">
+  <img src="docs/banner-dark.svg" alt="spillage – keep API keys out of your coding agent. Block the leak, find what already leaked, scrub it." width="100%">
 </picture>
 
 [![tests](https://github.com/maximilianfeix/spillage/actions/workflows/tests.yml/badge.svg)](https://github.com/maximilianfeix/spillage/actions/workflows/tests.yml)
@@ -28,21 +28,32 @@
 
 ---
 
-Your coding agent writes down everything. Every `.env` it read, every key you pasted "just to test this one call", every `printenv` it ran to debug something. Claude Code, Codex, Gemini CLI, Cline and the rest keep those conversations on your disk as plain JSON, and every one of those keys was also sent to the model provider when it happened.
-
-The Claude Code docs say it themselves: *"Transcripts and history are not encrypted at rest. OS file permissions are the only protection. If a tool reads a `.env` file or a command prints a credential, that value is written to `projects/<project>/<session>.jsonl`."* ([source](https://code.claude.com/docs/en/claude-directory))
-
-**spillage** finds them. It reads the logs of thirteen coding agents, tells you which keys leaked, *how* they got there (you pasted it, a tool printed it, the model repeated it) and links you to the page where you rotate each one. Then it scrubs them from disk and installs hooks so the next one gets blocked before it's sent.
+**Keep API keys out of your coding agent.** spillage puts hooks into Claude Code, Codex CLI and Gemini CLI that block a prompt with a key in it and stop the agent from reading `.env` or running `printenv`. Then it deals with what already got through: it finds the keys in the logs of thirteen agents, tells you how each one got there, and scrubs them from disk.
 
 <div align="center">
 <img src="docs/demo.svg" alt="Animated demo: spillage finds a GitHub token, a Stripe key and an Anthropic key in Claude Code and Codex logs, scrubs them and installs the guard hooks" width="860">
 </div>
 
+```bash
+pipx install spillage
+spillage guard install   # block the next leak
+spillage                 # find what already leaked
+```
+
+If it finds something on your machine, a star helps the next person find it before their key does.
+
+### Why
+
+Your coding agent writes down everything. Every `.env` it read, every key you pasted "just to test this one call", every `printenv` it ran to debug something. Claude Code, Codex, Gemini CLI, Cline and the rest keep those conversations on your disk as plain JSON, and every one of those keys was also sent to the model provider when it happened.
+
+The Claude Code docs say it themselves: *"Transcripts and history are not encrypted at rest. OS file permissions are the only protection. If a tool reads a `.env` file or a command prints a credential, that value is written to `projects/<project>/<session>.jsonl`."* ([source](https://code.claude.com/docs/en/claude-directory))
+
+- **Blocks it before it's sent.** `guard` stops prompts with a key in them and keeps the agent away from `.env`, private keys and `printenv`, in Claude Code, Codex and Gemini CLI. In Claude Code also as a [plugin](#install), with nothing else to install.
+- **Finds what already leaked.** Reads the logs of thirteen agents and says *how* each key got there (you pasted it, a tool printed it, the model repeated it), with a link to the page where you rotate it.
+- **Cleans up.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`.
 - **Zero dependencies, zero network.** Standard library only. Nothing leaves your machine, ever. Secrets are only ever shown masked.
-- **Knows the formats.** Tells a pasted prompt from tool output from a model answer, per agent. Finds keys inside JSON-escaped text, like a private key a tool printed with `\n` in it.
 - **Few false alarms.** GitHub tokens are checked against their built-in CRC32, JWTs have to decode, Discord tokens have to hold a real user id, placeholders like `sk-...your-key-here` are skipped.
-- **Fast.** Rules run over the raw files with literal-prefix regexes on all cores. About 240 MB of real agent history in under 4 seconds on a laptop.
-- **Fixes it, too.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`. `guard` blocks the next leak in Claude Code, Codex and Gemini CLI.
+- **Fast.** About 240 MB of real agent history in under 4 seconds on a laptop.
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -319,7 +330,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.9.1
+      - uses: maximilianfeix/spillage@v0.9.2
         with:
           strict: true   # fail on any committed transcript
 ```
@@ -334,7 +345,7 @@ To see them in the **Security tab** and on pull requests too, have it write SARI
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.9.1
+      - uses: maximilianfeix/spillage@v0.9.2
         with:
           sarif: spillage.sarif
       - uses: github/codeql-action/upload-sarif@v3
@@ -351,7 +362,7 @@ Each secret becomes one alert per file, with the masked value, the fingerprint, 
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/maximilianfeix/spillage
-    rev: v0.9.1
+    rev: v0.9.2
     hooks:
       - id: spillage               # block transcripts that contain secrets
       # - id: no-agent-transcripts # or block agent transcripts altogether
@@ -487,6 +498,13 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 - [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 87 rules
 - [x] Claude Code plugin, guard for the PowerShell tool, signed releases
 - [x] [PyPI release](https://pypi.org/project/spillage/)
+- [ ] [A config file, `.spillage.toml`](https://github.com/maximilianfeix/spillage/issues/76)
+- [ ] [A baseline file for CI: fail only on new secrets](https://github.com/maximilianfeix/spillage/issues/77)
+- [ ] [Rules from a file, without writing Python](https://github.com/maximilianfeix/spillage/issues/78)
+- [ ] [`scrub` for Cursor, Goose and Crush](https://github.com/maximilianfeix/spillage/issues/79)
+- [ ] [Spot hooks and MCP servers that something else planted](https://github.com/maximilianfeix/spillage/issues/80)
+
+A thumbs-up on an issue is how the order gets decided.
 
 <a id="community"></a>
 
@@ -494,7 +512,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 
 - **Questions, ideas, a setup worth showing:** [Discussions](https://github.com/maximilianfeix/spillage/discussions)
 - **A key it missed or a false alarm:** [open an issue](https://github.com/maximilianfeix/spillage/issues/new/choose), with the masked value only
-- **If it found something on your machine,** a star helps the next person find it before their key does
+- **Want to hear about new rules and agents?** Watch the repository's releases (Watch → Custom → Releases)
 
 <a id="contributing"></a>
 

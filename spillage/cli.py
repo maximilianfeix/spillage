@@ -221,7 +221,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     color = to_terminal and not args.no_color and supports_color(sys.stdout)
     progress = Progress() if to_terminal else None
     result = run_scan(args, progress)
-    report = render(result, args.format, color=color, verbose=args.verbose)
+    report = render(result, args.format, color=color, verbose=args.verbose,
+                    star=to_terminal and sys.stdout.isatty())
     if args.output:
         args.output.write_text(report + ("" if report.endswith("\n") else "\n"), encoding="utf-8")
         print(f"spillage: wrote {args.format} report to {args.output} "
