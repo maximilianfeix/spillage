@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- spillage is on PyPI: `pipx install spillage` or `uvx spillage`, no git URL needed
+
 ## [0.9.0] - 2026-10-10
 
 ### Added
