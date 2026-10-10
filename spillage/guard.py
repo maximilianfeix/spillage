@@ -110,7 +110,7 @@ def _names_a_secret(name: str) -> bool:
     return is_secret_name(name) and not (name_words(name) & _NOT_THE_VALUE)
 
 
-def _prints_secret_variable(verb: str, segment: str, words: List[str]) -> Optional[str]:
+def _printed_variable(verb: str, segment: str, words: List[str]) -> Optional[str]:
     """`echo $STRIPE_SECRET_KEY`, `printenv GITHUB_TOKEN`, `Write-Output $env:OPENAI_API_KEY`.
     Using a variable is fine (`curl -H "Authorization: Bearer $TOKEN"`), printing it is not."""
     # '$NAME' in single quotes is just text
@@ -175,7 +175,7 @@ def risky_command(command: str, powershell: bool = False) -> Optional[str]:
                 return reason
             continue
         if verb in _PRINTERS or (len(words) == 1 and verb.startswith("$env:")):  # PowerShell prints a bare value
-            name = _prints_secret_variable(verb, segment, words)
+            name = _printed_variable(verb, segment, words)
             if name:
                 return f"it prints {name}, which looks like a secret"
         if verb not in _READERS:
