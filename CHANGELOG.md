@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-10
+
 ### Changed
 - spillage is on PyPI: `pipx install spillage` or `uvx spillage`, no git URL needed
+
+### Fixed
+- the page on pypi.org: the banner, the demo and the report screenshot were missing, five links to files in the repository led nowhere and three links in the table of contents found no target. The release now gives PyPI a README with absolute addresses that point at the released tag, and CI renders it with PyPI's own renderer
+- more links in PyPI's sidebar: documentation, repository, release notes and the security policy
 
 ## [0.9.0] - 2026-10-10
 

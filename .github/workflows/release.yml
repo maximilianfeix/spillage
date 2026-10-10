@@ -23,6 +23,10 @@ jobs:
         with:
           python-version: "3.14"
 
+      # PyPI shows the README without the repository behind it: images and links have to be absolute
+      - name: The README for PyPI
+        run: python .github/pypi_readme.py "$GITHUB_REF_NAME"
+
       - name: Build
         run: |
           pip install --quiet build twine

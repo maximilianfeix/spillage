@@ -24,6 +24,12 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
 
+      # the README through PyPI's own renderer: no image or link that would be broken on pypi.org
+      - name: The PyPI page
+        run: |
+          pip install --quiet "readme-renderer[md]"
+          python .github/check_pypi_page.py
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python }})
     runs-on: ${{ matrix.os }}

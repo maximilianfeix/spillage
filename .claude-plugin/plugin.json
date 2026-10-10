@@ -1,7 +1,7 @@
 {
   "name": "spillage",
   "displayName": "spillage",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Blocks prompts that contain an API key, stops the agent from reading .env files and printing secrets, and scrubs the transcript when the session ends.",
   "author": {
     "name": "Maximilian Feix",
