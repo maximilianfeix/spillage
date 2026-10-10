@@ -225,3 +225,28 @@ def test_scrub_keeps_the_inode(home):
     now[0] = 1100.0
     assert w.scrub_quiet()
     assert session.stat().st_ino == ino
+
+
+def test_windows_toast_gets_the_text_through_the_environment(monkeypatch):
+    """A key name or a path with a quote or a `$(...)` in it must never become PowerShell code."""
+    from spillage import watch
+
+    seen = {}
+
+    def run(cmd, **kwargs):
+        seen["cmd"], seen["env"] = cmd, kwargs["env"]
+
+    monkeypatch.setattr(watch.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(watch.shutil, "which", lambda name: name)
+    monkeypatch.setattr(watch.subprocess, "Popen", run)
+    assert watch.notify('a "title"', "$(calc) `whoami`") is True
+    assert seen["env"]["SPILLAGE_TITLE"] == 'a "title"'
+    assert seen["env"]["SPILLAGE_MESSAGE"] == "$(calc) `whoami`"
+    assert "calc" not in " ".join(seen["cmd"]) and "title" not in " ".join(seen["cmd"])
+
+
+def test_no_notification_without_a_way_to_show_one(monkeypatch):
+    from spillage import watch
+
+    monkeypatch.setattr(watch.shutil, "which", lambda name: None)
+    assert watch.notify("t", "m") is False
