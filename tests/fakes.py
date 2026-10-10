@@ -303,3 +303,70 @@ def cloudflare_origin_ca() -> str:
 
 def gitlab_agent() -> str:
     return "gl" + "agent-" + rand(50, ALNUM + "-_")
+
+
+HEX = "0123456789abcdef"
+
+
+def docker_oat() -> str:
+    return "dckr" + "_oat_" + rand(32, ALNUM + "-_")
+
+
+def vercel(kind: str = "p") -> str:
+    return "vc" + f"{kind}_" + rand(56, ALNUM + "-_")
+
+
+def cloudflare(kind: str = "ut") -> str:
+    return "cf" + f"{kind}_" + rand(40) + rand(8, HEX)
+
+
+def supabase_access() -> str:
+    return "sb" + "p_" + rand(40, HEX)
+
+
+def brave() -> str:
+    return "BS" + "A" + rand(27) + "7x"
+
+
+def bedrock() -> str:
+    return "AB" + "SK" + rand(132, ALNUM + "+/")
+
+
+def neon() -> str:
+    return "nap" + "i_" + rand(64)
+
+
+def together() -> str:
+    return "tgp" + "_v1_" + rand(43, ALNUM + "-_")
+
+
+def cerebras() -> str:
+    return "cs" + "k-" + rand(48, "abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def nvidia() -> str:
+    return "nv" + "api-" + rand(64, ALNUM + "-_")
+
+
+def langfuse() -> str:
+    return "sk" + "-lf-" + "-".join(rand(n, HEX) for n in (8, 4, 4, 4, 12))
+
+
+def wandb() -> str:
+    return "wandb" + "_v1_" + rand(27) + "_" + rand(49)
+
+
+def gitlab_deploy(kind: str = "dt") -> str:
+    return "gl" + f"{kind}-" + rand(20, ALNUM + "-_")
+
+
+def gitlab_routable() -> str:
+    return "glp" + "at-" + rand(27, ALNUM + "-_") + ".01." + rand(9, "abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def github_refresh() -> str:
+    return "gh" + "r_" + rand(76)
+
+
+def slack_refresh() -> str:
+    return "xox" + "e.xoxp-1-" + rand(140)

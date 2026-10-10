@@ -20,7 +20,7 @@
 <a href="#install"><img src="https://img.shields.io/badge/Install-FF6B4A?style=for-the-badge&labelColor=0E0F13" alt="Install"></a>
 <a href="#scrub"><img src="https://img.shields.io/badge/Scrub-0E0F13?style=for-the-badge" alt="Scrub"></a>
 <a href="#guard"><img src="https://img.shields.io/badge/Guard_hooks-0E0F13?style=for-the-badge" alt="Guard hooks for Claude Code, Codex and Gemini CLI"></a>
-<a href="#what-it-finds"><img src="https://img.shields.io/badge/87_rules-0E0F13?style=for-the-badge" alt="87 rules"></a>
+<a href="#what-it-finds"><img src="https://img.shields.io/badge/100_rules-0E0F13?style=for-the-badge" alt="100 rules"></a>
 
 [Website](https://maximilianfeix.github.io/spillage/) · [Install](#install) · [Where it looks](#where-it-looks) · [What it finds](#what-it-finds) · [Scrub](#scrub) · [Guard](#guard) · [Repos & CI](#repo) · [Compared](#compared) · [How it works](#how-it-works) · [FAQ](#faq)
 
@@ -157,14 +157,14 @@ spillage checks the global files and the ones in your project folders, and shows
 
 ## What it finds
 
-87 rules. Each one knows the key's exact shape and where to revoke it.
+100 rules. Each one knows the key's exact shape and where to revoke it.
 
 | | |
 | --- | --- |
-| **AI providers** | Anthropic (API, admin, and Claude Code OAuth tokens from `claude setup-token`), OpenAI (user, project, service account, admin), OpenRouter, Google AI / Gemini, Hugging Face, Groq, xAI, Perplexity, Replicate |
-| **AI app stack** | Supabase secret keys, LangSmith, Pinecone, Tavily, Firecrawl, Resend, PostHog, Vercel Blob. Most of these aren't in gitleaks' default rules |
-| **Code and packages** | GitHub (classic, OAuth, app, refresh, fine-grained; checksum-verified), GitLab, npm, PyPI |
-| **Deploy and hosting** | Docker Hub, Fly.io, Netlify, Render, Heroku, Scalingo, Pulumi, Infracost, Tailscale, Cloudflare Origin CA keys, Azure storage account keys, age secret keys, RubyGems, Clojars, Bitbucket app passwords, GitLab agent tokens |
+| **AI providers** | Anthropic (API, admin, and Claude Code OAuth tokens from `claude setup-token`), OpenAI (user, project, service account, admin), OpenRouter, Google AI / Gemini, Hugging Face, Groq, xAI, Perplexity, Replicate, AWS Bedrock, Together AI, Cerebras, NVIDIA |
+| **AI app stack** | Supabase secret keys and access tokens, LangSmith, Langfuse, Weights & Biases, Pinecone, Tavily, Firecrawl, Brave Search, Resend, PostHog, Vercel Blob, Neon. Most of these aren't in gitleaks' default rules |
+| **Code and packages** | GitHub (classic, OAuth, app, refresh, fine-grained; checksum-verified), GitLab (personal, deploy, runner, trigger), npm, PyPI |
+| **Deploy and hosting** | Vercel, Cloudflare API tokens, Docker Hub (personal and organization), Fly.io, Netlify, Render, Heroku, Scalingo, Pulumi, Infracost, Tailscale, Cloudflare Origin CA keys, Azure storage account keys, age secret keys, RubyGems, Clojars, Bitbucket app passwords, GitLab agent tokens |
 | **Cloud and infra** | AWS access key id and secret key, Google OAuth client secrets and refresh tokens, DigitalOcean, Databricks, Doppler, HashiCorp Vault, 1Password service accounts, PlanetScale |
 | **Payments and SaaS** | Stripe (live is critical, test is low), Slack tokens and webhooks, Discord bot tokens and webhooks, Telegram bots, SendGrid, Brevo, Twilio, Shopify, Linear, Notion, Sentry, Grafana, Postman, Atlassian, Figma, Square, Stripe webhook secrets, Slack app tokens, New Relic, Mapbox, Airtable, ElevenLabs, E2B, Prefect, ReadMe, Duffel, EasyPost, Frame.io |
 | **Everything else** | private keys (RSA, EC, OpenSSH, PGP, …), database URLs with a password in them, JWTs (Supabase `anon` keys count as low), and `API_KEY=…` / `"client_secret": "…"` / `Bearer …` with a high-entropy value |
@@ -331,7 +331,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.9.2
+      - uses: maximilianfeix/spillage@v0.10.0
         with:
           strict: true   # fail on any committed transcript
 ```
@@ -346,7 +346,7 @@ To see them in the **Security tab** and on pull requests too, have it write SARI
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.9.2
+      - uses: maximilianfeix/spillage@v0.10.0
         with:
           sarif: spillage.sarif
       - uses: github/codeql-action/upload-sarif@v3
@@ -363,7 +363,7 @@ Each secret becomes one alert per file, with the masked value, the fingerprint, 
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/maximilianfeix/spillage
-    rev: v0.9.2
+    rev: v0.10.0
     hooks:
       - id: spillage               # block transcripts that contain secrets
       # - id: no-agent-transcripts # or block agent transcripts altogether
@@ -381,7 +381,7 @@ Run them too. They are built for repositories and live sessions, spillage is bui
 | **Keys already in the logs** | found, with the session, the project and whether you, a tool or the model wrote them | found as plain text, without the conversation around them | not covered, it scans sessions as they happen |
 | **Cleaning up** | redacts in place, `--resume` keeps working | no | no |
 | **Blocking the next one** | hooks for Claude Code, Codex and Gemini CLI | pre-commit, not inside the agent | hooks for Cursor, Claude Code, Codex, Copilot CLI and more |
-| **Detection** | 87 rules plus the exact values from your `.env` files | hundreds of detectors; TruffleHog also tests whether a key is live | 600+ secret types |
+| **Detection** | 100 rules plus the exact values from your `.env` files | hundreds of detectors; TruffleHog also tests whether a key is live | 600+ secret types |
 | **Account and network** | none | none for gitleaks; TruffleHog calls the provider to verify | GitGuardian account, scans go through its API |
 
 Where the others are ahead: far more detectors, live verification of keys (TruffleHog), and hooks for more tools (ggshield). If you only want to check that a few known keys are not in a folder you are about to publish, Simon Willison's [scan-for-secrets](https://github.com/simonw/scan-for-secrets) does exactly that.
@@ -393,7 +393,7 @@ Sources: the [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](h
 ## How it works
 
 ```
- agent logs ──▶ discover ──▶ raw text ──▶ 87 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
+ agent logs ──▶ discover ──▶ raw text ──▶ 100 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
  (14 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with
@@ -496,7 +496,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 - [x] [CI on all three operating systems](https://github.com/maximilianfeix/spillage/issues/1)
 - [x] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7)
 - [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
-- [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 87 rules
+- [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 100 rules
 - [x] Claude Code plugin, guard for the PowerShell tool, signed releases
 - [x] [PyPI release](https://pypi.org/project/spillage/)
 - [ ] [A config file, `.spillage.toml`](https://github.com/maximilianfeix/spillage/issues/76)

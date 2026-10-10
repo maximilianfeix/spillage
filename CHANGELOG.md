@@ -2,10 +2,21 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-10
+
 ### Added
+- 13 new rules, 100 in total: Vercel tokens, Cloudflare API tokens, Supabase access tokens, Brave Search, AWS Bedrock, Neon, Together AI, Cerebras, NVIDIA, Langfuse, Weights & Biases, Docker organization tokens and GitLab deploy, runner and trigger tokens
+- `guard` sees through what stands in front of a command: `timeout 5 cat .env`, `nohup`, `env`, `FOO=1 cat .env`, `sudo -u root`, `nice -n 5`, and `(cat .env)` in a subshell. The agents' own credential stores (`~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, `gh/hosts.yml`), `.dev.vars`, `*.tfstate`, `.pgpass` and `.my.cnf` count as secret files
 - more of what the agents keep on disk is read. Claude Code: tool output that was too big for the transcript (`tool-results/`, where a dumped `.env` lands), superseded sessions, project memory, `session-env/`, `tasks/`, `plans/` and `debug/`. Codex: the copies of every session it keeps in SQLite next to the rollout files. Gemini CLI: sessions in the JSONL format it writes since 0.39, subagents included. OpenCode: its SQLite database. Qwen Code: the folder newer versions use. Cursor: the agent's transcripts under `~/.cursor`. Copilot CLI: its search database, command history and the JetBrains plugin's sessions, with `COPILOT_HOME`
 - Copilot Chat in VS Code, VS Code Insiders and VSCodium is the fourteenth agent
 - Claude Desktop from the Microsoft Store: its MCP settings are found in the app's private folder
+
+### Fixed
+- a key printed in colour was missed by every rule: the terminal's colour code in front of it ends in a letter, which looked like the start of a longer word
+- the JWT rule got 4x slower for every doubling of a text like `eyJeyJeyJ…` (a second at 80 KB). A prompt is scanned before it is sent, so this could hold up the hook. It is linear now, and a test times every rule on text made to hurt it
+- Slack refresh tokens (`xoxe-`, `xoxe.xoxp-`) and the `xoxc-`/`xoxd-` pair, AWS key ids that start with `ABIA` or `ACCA`, and GitHub refresh tokens longer than 40 characters were not found. A GitLab token in the routable format was reported and scrubbed without its `.01.…` ending
+- a `--path` that does not exist was reported as a clean scan of 0 files, and a report that could not be written ended in a traceback. Both are errors with exit code 2 now, and so is `--workers 0`
+- letters inside a base64 file that Claude Code read (`toolUseResult.file.base64`) could look like a key
 
 ### Changed
 - `scrub` says so for every database that still holds a key (Codex, OpenCode and Copilot CLI keep copies of a session in SQLite). It rewrites the session files and leaves the databases alone

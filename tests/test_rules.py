@@ -27,6 +27,25 @@ def secrets(text: str) -> list:
 
 
 POSITIVES = [
+    ("docker-org-token", fakes.docker_oat),
+    ("vercel-token", fakes.vercel),
+    ("vercel-token", lambda: fakes.vercel("k")),
+    ("cloudflare-api-token", fakes.cloudflare),
+    ("cloudflare-api-token", lambda: fakes.cloudflare("k")),
+    ("supabase-access-token", fakes.supabase_access),
+    ("brave-search-api-key", fakes.brave),
+    ("aws-bedrock-api-key", fakes.bedrock),
+    ("neon-api-key", fakes.neon),
+    ("together-api-key", fakes.together),
+    ("cerebras-api-key", fakes.cerebras),
+    ("nvidia-api-key", fakes.nvidia),
+    ("langfuse-secret-key", fakes.langfuse),
+    ("wandb-api-key", fakes.wandb),
+    ("gitlab-deploy-token", fakes.gitlab_deploy),
+    ("gitlab-deploy-token", lambda: fakes.gitlab_deploy("rt")),
+    ("gitlab-token", fakes.gitlab_routable),
+    ("github-token", fakes.github_refresh),
+    ("slack-token", fakes.slack_refresh),
     ("github-token", lambda: fakes.github("p")),
     ("github-token", lambda: fakes.github("o")),
     ("github-token", lambda: fakes.github("s")),
@@ -348,3 +367,24 @@ def test_no_rule_gets_slow_on_text_made_to_hurt_it():
                 if taken > 2.0:
                     slow.append((rule.id, start, round(taken, 2)))
     assert slow == []
+
+
+def test_a_key_printed_in_colour_is_found():
+    """Tools colour their output; the escape code ends in a letter right before the key."""
+    key = fakes.github()
+    for before in ("\x1b[32m", "\x1b[1;31m", "\\u001b[32m", "\\x1b[0m", "\\033[36m"):
+        assert secrets(f"TOKEN {before}{key}\x1b[0m") == [key], before
+    assert secrets(f"atom{key}") == []  # an ordinary letter before it is still part of a longer word
+
+
+def test_the_whole_token_is_reported_so_the_whole_token_is_scrubbed():
+    routable, refresh = fakes.gitlab_routable(), fakes.slack_refresh()
+    assert secrets(f"GITLAB={routable} SLACK={refresh}") == [routable, refresh]
+
+
+@pytest.mark.parametrize("text", [
+    "BSAFETY_CHECK_FOR_ALL_THE_MODULES_27", "vcp_" + "a" * 56, "sbp_" + "0" * 40, "csk-" + "a" * 48,
+    "ABSK" + "A" * 140, "see the ghr_" + "a" * 60 + " placeholder", "napi_" + "x" * 64,
+])
+def test_lookalikes_of_the_newer_formats(text):
+    assert ids(text) == []
