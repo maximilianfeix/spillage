@@ -159,3 +159,15 @@ def test_output_survives_a_legacy_encoding(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert "no secrets" in proc.stdout.decode("utf-8")
+
+
+def test_the_star_line_is_only_for_a_terminal(leaky_home):
+    from spillage.reporters import HOMEPAGE, render
+    from spillage.scanner import Scanner
+    from spillage.sources import build_sources
+
+    result = Scanner(workers=1).scan(build_sources())
+    assert f"A star helps the next person find it: {HOMEPAGE}" in render(result, "text", star=True)
+    assert "A star helps" not in render(result, "text")  # a file, a pipe, CI
+    for fmt in ("json", "markdown", "sarif", "html"):
+        assert "A star helps" not in render(result, fmt, star=True)

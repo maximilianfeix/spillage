@@ -62,7 +62,8 @@ def render_json(result: ScanResult, **_) -> str:
 
 @reporter("text")
 def render_text(
-    result: ScanResult, color: bool = False, verbose: bool = False, repo: bool = False, repo_ignore: str = "", **_
+    result: ScanResult, color: bool = False, verbose: bool = False, repo: bool = False, repo_ignore: str = "",
+    star: bool = False, **_
 ) -> str:
     p = Painter(color)
     w = width()
@@ -134,6 +135,10 @@ def render_text(
     out.append(f"    {p('False alarm?', 'dim')} {p('spillage ignore <fingerprint>', 'cyan')}")
     if stats.ignored:
         out.append(p(f"    ({stats.ignored} ignored by fingerprint)", "dim"))
+    if star:
+        # only for a person at a terminal who just saw it find something, never in a file or in CI
+        out.append("")
+        out.append(p(f"    Glad it caught these? A star helps the next person find it: {HOMEPAGE}", "dim"))
     out.append("")
     return "\n".join(out)
 

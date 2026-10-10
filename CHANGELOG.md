@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-10
+
+### Changed
+- the README opens with what the hooks prevent, then the scan and the scrub, with the demo and three commands at the top; the roadmap lists what is planned, each with an issue
+- after a scan that found something, the report on a terminal ends with one line that asks for a star. It is not printed into a file, a pipe, CI or any other format
+- the GitHub Action is called "Spillage Secret Scan", since the Marketplace does not accept a name that matches a user. It is still used as `maximilianfeix/spillage@v0.9.2`
+- download and star badges
+
 ## [0.9.1] - 2026-10-10
 
 ### Changed
