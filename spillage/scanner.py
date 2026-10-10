@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .models import Finding, Location, Severity, fingerprint
+from .models import Finding, Hider, Location, Severity, fingerprint
 from .rules import Match, Rule, get_rules, rule_spec, rules_from_spec
 from .sources import MAX_FILE_BYTES, Source
 
@@ -40,6 +40,16 @@ class ScanStats:
 class ScanResult:
     findings: List[Finding]
     stats: ScanStats
+    # secrets the scan saw but doesn't report: the ones below --min-severity. Not the ones you
+    # ignored by fingerprint, since you said those aren't secrets.
+    seen: frozenset = field(default_factory=frozenset, repr=False)
+    _hider: Optional[Hider] = field(default=None, init=False, repr=False, compare=False)
+
+    def hide(self, text: str) -> str:
+        """`text` without any full secret in it, see models.Hider."""
+        if self._hider is None:
+            self._hider = Hider(self.seen.union(f.secret for f in self.findings))
+        return self._hider(text)
 
     def by_severity(self, severity: Severity) -> List[Finding]:
         return [f for f in self.findings if f.severity == severity]
@@ -51,7 +61,7 @@ class ScanResult:
     def to_dict(self) -> dict:
         from . import __version__
 
-        return {
+        return self._hidden({
             "version": __version__,
             "summary": {
                 "findings": len(self.findings),
@@ -64,9 +74,19 @@ class ScanResult:
                 "seconds": round(self.stats.seconds, 3),
                 "ignored": self.stats.ignored,
                 "agents": self.stats.per_agent,
+                "errors": self.stats.errors,
             },
             "findings": [f.to_dict() for f in self.findings],
-        }
+        })
+
+    def _hidden(self, node):
+        if isinstance(node, str):
+            return self.hide(node)
+        if isinstance(node, dict):
+            return {key: self._hidden(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [self._hidden(value) for value in node]
+        return node
 
 
 def find_in_text(text: str, rules: Sequence[Rule]) -> List[Tuple[Rule, Match]]:
@@ -212,7 +232,8 @@ class Scanner:
         hits = self._run(jobs, stats)
         findings = self._merge(hits, stats)
         stats.seconds = time.perf_counter() - started
-        return ScanResult(findings, stats)
+        seen = frozenset(secret for _, secret, _ in hits if fingerprint(secret) not in self.ignore)
+        return ScanResult(findings, stats, seen=seen)
 
     def _run(self, jobs: List[Tuple[Source, Path, int]], stats: ScanStats) -> List[Hit]:
         workers = self.workers if self.workers is not None else min(8, os.cpu_count() or 1)

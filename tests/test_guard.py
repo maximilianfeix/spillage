@@ -37,6 +37,9 @@ def test_not_secret_files(path):
     "grep API .env", "rg -n TOKEN .env.production", "source .env && echo $KEY",
     "security find-generic-password -s github -w", "aws configure get aws_secret_access_key",
     "cat /proc/self/environ", "echo $(cat .env)", "python3 -c 'print(1)' < .env",
+    "printenv OPENAI_API_KEY", "echo $STRIPE_SECRET_KEY", 'echo "token: ${GITHUB_TOKEN}"', "cat .ENV", "cat<.env",
+    """python -c "print(open('.env').read())\"""", "xargs cat < .env", "Get-Content .env", "gci env:",
+    "Get-ChildItem Env:", "Write-Output $env:OPENAI_API_KEY", "$env:ANTHROPIC_API_KEY",
 ])
 def test_risky_commands(command):
     assert guard.risky_command(command)
@@ -45,6 +48,9 @@ def test_risky_commands(command):
 @pytest.mark.parametrize("command", [
     "ls -la", "cat README.md", "env FOO=1 npm test", "set -euo pipefail", "cp .env.example .env",
     "git status", "printenv HOME", "grep -r TODO src", "echo 'API_KEY=' >> .env.example", "npm run dev",
+    "grep -rn credentials src/", "rg secrets.json", "echo $HOME", "printenv PATH", "python manage.py migrate",
+    'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user', "python -c 'import json'",
+    "$env:PATH", "ls env/",
 ])
 def test_harmless_commands(command):
     assert guard.risky_command(command) is None
@@ -400,3 +406,11 @@ def test_uninstall_says_when_nothing_was_there(home, capsys):
 def test_strip_json_comments_keeps_strings():
     text = '{"a": "// not a comment", "b": "/* nor this */", /* c */ "c": [1, 2,], }'
     assert json.loads(guard.strip_json_comments(text)) == {"a": "// not a comment", "b": "/* nor this */", "c": [1, 2]}
+
+
+def test_powershell_tool_is_checked():
+    assert guard.check_tool("PowerShell", {"command": "Get-Content .env"})
+    assert guard.check_tool("PowerShell", {"command": "Get-ChildItem"}) is None
+    import re as _re
+
+    assert _re.fullmatch(guard.TOOL_MATCHER, "PowerShell")

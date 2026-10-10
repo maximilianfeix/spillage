@@ -12,6 +12,7 @@ in the logs, and those are never reported again. That's `spillage scan`'s job.
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -196,8 +197,15 @@ class Watcher:
             if fp in self.reported:
                 continue
             self.reported.add(fp)
-            finding = Finding(rule.id, rule.name_for(secret), rule.provider, rule.severity_for(secret), secret,
-                              rule.rotate_url, [location])
+            finding = Finding(
+                rule.id,
+                rule.name_for(secret),
+                rule.provider,
+                rule.severity_for(secret),
+                secret,
+                rule.rotate_url,
+                [location],
+            )
             events.append(Event(finding, location))
         return events
 
@@ -241,9 +249,35 @@ def notify(title: str, message: str) -> bool:
         if system == "Linux" and shutil.which("notify-send"):
             subprocess.run(["notify-send", "--urgency=critical", title, message], capture_output=True, timeout=5)
             return True
+        if system == "Windows" and shutil.which("powershell"):
+            # the texts go in through the environment, so nothing in them is ever run as code.
+            # Not waited for: PowerShell takes a second to start, and the next leak shouldn't.
+            env = dict(os.environ, SPILLAGE_TITLE=title, SPILLAGE_MESSAGE=message)
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", _TOAST], env=env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )  # fmt: skip
+            return True
     except (OSError, subprocess.SubprocessError):
         pass
     return False
+
+
+# A toast through the notification API that ships with Windows 10 and 11. It is shown under
+# PowerShell's name, since a toast needs an app that is registered in the start menu.
+_TOAST = r"""
+$ErrorActionPreference = 'Stop'
+[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+$type = [Windows.UI.Notifications.ToastTemplateType]::ToastText02
+$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($type)
+$text = $xml.GetElementsByTagName('text')
+[void]$text.Item(0).AppendChild($xml.CreateTextNode($env:SPILLAGE_TITLE))
+[void]$text.Item(1).AppendChild($xml.CreateTextNode($env:SPILLAGE_MESSAGE))
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show($toast)
+"""
 
 
 def _applescript(text: str) -> str:

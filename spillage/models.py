@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Optional
+from typing import Dict, Iterable, Optional
 
 
 class Severity(IntEnum):
@@ -74,6 +76,39 @@ def mask(secret: str, keep: int = 6) -> str:
         keep = min(keep, 2)
     keep = min(keep, len(secret) // 4 or 1)
     return f"{secret[:keep]}…({len(secret)} chars)"
+
+
+HIDE_MIN_LENGTH = 12  # shorter values (a password like "postgres") are ordinary words too
+
+
+class Hider:
+    """Takes full secrets out of text: `Hider(secrets)(text)`.
+
+    Reports show secrets masked, but a key can also sit where nobody expects one: in a folder
+    name, a session id, a timestamp field. Everything that leaves the program goes through
+    here, so those places can't carry it out either. One compiled pattern for all secrets, so a
+    report with thousands of strings is one pass each."""
+
+    def __init__(self, secrets: Iterable[str]) -> None:
+        self._markers: Dict[str, str] = {}
+        for secret in set(secrets):
+            if len(secret) < HIDE_MIN_LENGTH:
+                continue
+            # as it is, and the two ways JSON may have written it
+            for form in (secret, json.dumps(secret)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1]):
+                self._markers[form] = f"[REDACTED:{fingerprint(secret)}]"
+        longest_first = sorted(self._markers, key=len, reverse=True)
+        self._pattern = re.compile("|".join(map(re.escape, longest_first))) if longest_first else None
+
+    def __call__(self, text: str) -> str:
+        if self._pattern is None:
+            return text
+        return self._pattern.sub(lambda match: self._markers[match.group(0)], text)
+
+
+def hide_secrets(text: str, secrets: Iterable[str]) -> str:
+    """`text` with every full secret replaced by a marker, see Hider."""
+    return Hider(secrets)(text)
 
 
 @dataclass

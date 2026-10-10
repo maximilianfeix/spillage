@@ -275,3 +275,32 @@ def test_session_end_scrub_skips_thinking_too(home):
     ])
     assert scrub_file(path) == 1
     assert path.read_text().count(key) == 1
+
+
+def test_a_key_in_an_answer_and_in_its_signed_thinking_block(home):
+    """Both in one record: the answer is redacted, the signed block is not, whichever comes first."""
+    key = fakes.github()
+    thinking = {"type": "thinking", "thinking": f"the user gave {key}", "signature": "x" * 300}
+    answer = {"type": "text", "text": f"I will use {key}"}
+    for blocks in ([answer, thinking], [thinking, answer]):
+        path = home.claude_session(records=[{"type": "assistant", "message": {"content": blocks}}])
+        report = scrub(scan().findings, now=LONG_AGO)
+        assert report.replacements == 1 and report.signed == 1
+        (record,) = (json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
+        by_type = {block["type"]: block for block in record["message"]["content"]}
+        assert by_type["thinking"]["thinking"] == f"the user gave {key}"
+        assert key not in by_type["text"]["text"]
+        path.unlink()
+
+
+def test_a_place_that_cant_be_told_for_sure_leaves_the_signed_block_alone(home):
+    """The key is also a dict key, so the line holds it more often than the record's strings do."""
+    key = fakes.github()
+    path = home.claude_session(records=[{"type": "assistant", "seen": {key: 1}, "message": {"content": [
+        {"type": "thinking", "thinking": f"the user gave {key}", "signature": "x" * 300},
+        {"type": "text", "text": f"I will use {key}"},
+    ]}}])
+    report = scrub(scan().findings, now=LONG_AGO)
+    assert report.signed >= 1
+    (record,) = (json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
+    assert record["message"]["content"][0]["thinking"] == f"the user gave {key}"

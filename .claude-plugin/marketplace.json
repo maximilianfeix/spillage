@@ -1,0 +1,15 @@
+{
+  "name": "spillage",
+  "description": "spillage: keep API keys out of your coding agent's conversations and logs.",
+  "owner": {
+    "name": "Maximilian Feix",
+    "url": "https://github.com/maximilianfeix"
+  },
+  "plugins": [
+    {
+      "name": "spillage",
+      "source": "./",
+      "category": "security"
+    }
+  ]
+}

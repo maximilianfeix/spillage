@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+- a Claude Code plugin: `/plugin install spillage --marketplace maximilianfeix/spillage` adds the three guard hooks without installing anything else. It runs from the plugin's folder with the Python that is already there
+- `spillage watch` shows desktop notifications on Windows too, as a toast, next to macOS and Linux
+- releases are published to PyPI from the release workflow with trusted publishing, and every released file carries a build attestation (`gh attestation verify`)
+- `guard` checks Claude Code's PowerShell tool on Windows, not only Bash: `Get-Content .env`, `Select-String`, `Get-ChildItem Env:`, `$env:OPENAI_API_KEY`, `[Environment]::GetEnvironmentVariable(...)`, and Windows paths with backslashes. Run `spillage guard install` once more to get the new matcher
+- `guard` also blocks printing one variable that is named like a secret (`printenv GITHUB_TOKEN`, `echo $STRIPE_SECRET_KEY`), a script on the command line that opens a secret file or prints the whole environment (`python -c "open('.env')"`, `print(os.environ)`), a command inside another shell (`bash -c 'cat .env'`), `cat<.env` and `xargs -0 cat .env`. Using a variable stays allowed (`curl -H "Authorization: Bearer $TOKEN"`), and so does asking whether it is set (`echo "${API_KEY:+set}"`)
+- files that could not be scanned are shown in every report: at the end of the text report, in `summary.errors` of the JSON, in the HTML page and as notifications in SARIF. A scan that skipped a file no longer says "Nothing spilled"
+- an OpenSSF Scorecard workflow, and every GitHub Action in the workflows is pinned to a commit
+
+### Fixed
+- `scrub` redacted a signed thinking block when the same key appeared earlier in the same record, in the answer next to it. That breaks `--resume` for the session. A match is now placed by its position in the record, so the answer is redacted and the signed block is left alone, in either order. Where the position can't be told for sure, a record with the key in a signed block is left as it is
+- a key that sat in a folder name, a session id, a `cwd` or a timestamp field was printed in full by the JSON, SARIF and HTML reports, as part of the location. Every format now replaces a full secret anywhere in its output with `[REDACTED:fingerprint]`, also one below `--min-severity`
+- `guard` no longer blocks a search for a word that is also a file name (`grep -rn credentials src/`)
+- `guard` treats `.ENV` like `.env` on every system; before, only on Windows
+
 ## [0.8.0] - 2026-10-05
 
 ### Added
