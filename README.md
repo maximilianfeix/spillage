@@ -28,7 +28,7 @@
 
 ---
 
-**Keep API keys out of your coding agent.** spillage puts hooks into Claude Code, Codex CLI and Gemini CLI that block a prompt with a key in it and stop the agent from reading `.env` or running `printenv`. Then it deals with what already got through: it finds the keys in the logs of thirteen agents, tells you how each one got there, and scrubs them from disk.
+**Keep API keys out of your coding agent.** spillage puts hooks into Claude Code, Codex CLI and Gemini CLI that block a prompt with a key in it and stop the agent from reading `.env` or running `printenv`. Then it deals with what already got through: it finds the keys in the logs of fourteen agents, tells you how each one got there, and scrubs them from disk.
 
 <div align="center">
 <img src="docs/demo.svg" alt="Animated demo: spillage finds a GitHub token, a Stripe key and an Anthropic key in Claude Code and Codex logs, scrubs them and installs the guard hooks" width="860">
@@ -49,7 +49,7 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 The Claude Code docs say it themselves: *"Transcripts and history are not encrypted at rest. OS file permissions are the only protection. If a tool reads a `.env` file or a command prints a credential, that value is written to `projects/<project>/<session>.jsonl`."* ([source](https://code.claude.com/docs/en/claude-directory))
 
 - **Blocks it before it's sent.** `guard` stops prompts with a key in them and keeps the agent away from `.env`, private keys and `printenv`, in Claude Code, Codex and Gemini CLI. In Claude Code also as a [plugin](#install), with nothing else to install.
-- **Finds what already leaked.** Reads the logs of thirteen agents and says *how* each key got there (you pasted it, a tool printed it, the model repeated it), with a link to the page where you rotate it.
+- **Finds what already leaked.** Reads the logs of fourteen agents and says *how* each key got there (you pasted it, a tool printed it, the model repeated it), with a link to the page where you rotate it.
 - **Cleans up.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`.
 - **Zero dependencies, zero network.** Standard library only. Nothing leaves your machine, ever. Secrets are only ever shown masked.
 - **Few false alarms.** GitHub tokens are checked against their built-in CRC32, JWTs have to decode, Discord tokens have to hold a real user id, placeholders like `sk-...your-key-here` are skipped.
@@ -112,19 +112,20 @@ It blocks prompts that contain a key, keeps the agent from reading `.env` files 
 
 | Agent | What gets read |
 | --- | --- |
-| **Claude Code** | `~/.claude/projects/**/*.jsonl` (sessions), `history.jsonl`, `file-history/` (backups of files it edited), `paste-cache/`, `shell-snapshots/`, `todos/`. Honors `CLAUDE_CONFIG_DIR` |
-| **Codex CLI** | `~/.codex/sessions/`, `archived_sessions/`, `history.jsonl`, `log/`. Honors `CODEX_HOME` |
-| **Gemini CLI** | `~/.gemini/tmp/*/chats/`, `logs.json`, checkpoints |
-| **OpenCode** | `~/.local/share/opencode/storage/` |
+| **Claude Code** | `~/.claude/projects/**/*.jsonl` (sessions and subagents), `tool-results/` (tool output that was too big for the transcript), superseded sessions, project memory, `history.jsonl`, `file-history/` (backups of files it edited), `paste-cache/`, `shell-snapshots/`, `session-env/`, `tasks/`, `plans/`, `debug/`. Honors `CLAUDE_CONFIG_DIR` |
+| **Codex CLI** | `~/.codex/sessions/`, `archived_sessions/`, `history.jsonl`, and the copies Codex keeps in SQLite next to them (`thread_history_*.sqlite`, `state_*.sqlite`, `memories_*.sqlite`). Honors `CODEX_HOME` and `CODEX_SQLITE_HOME` |
+| **Gemini CLI** | `~/.gemini/tmp/*/chats/` (JSON and JSONL sessions, subagents included), `logs.json`, checkpoints |
+| **OpenCode** | `~/.local/share/opencode/opencode.db` (SQLite) and the older `storage/` folder |
 | **Cline, Roo Code, Kilo Code** | task histories in the extension storage of VS Code, Cursor, Windsurf, VSCodium and Kiro |
 | **Continue** | `~/.continue/sessions/` |
-| **Cursor** | chats in `state.vscdb` (SQLite), global and per workspace. Only chat rows are read, never Cursor's own login |
-| **Qwen Code** | `~/.qwen/tmp/*/chats/`, logs and checkpoints |
+| **Cursor** | chats in `state.vscdb` (SQLite), global and per workspace, and the agent's transcripts under `~/.cursor/projects/`. Only chat rows are read, never Cursor's own login |
+| **Qwen Code** | `~/.qwen/projects/*/chats/` and the older `~/.qwen/tmp/*/chats/`, logs and checkpoints |
 | **Goose** | `~/.local/share/goose/sessions/sessions.db` (SQLite) and older `~/.config/goose/sessions/*.jsonl` |
 | **Crush** | `.crush/crush.db` (SQLite) in each project it knows about |
 | **Aider** | `.aider.chat.history.md` and `.aider.input.history` in your projects |
 | **SpecStory** | `.specstory/history/*.md` in your projects |
-| **GitHub Copilot CLI** | `~/.copilot/session-state/`, `history-session-state/` |
+| **GitHub Copilot CLI** | `~/.copilot/session-state/`, `history-session-state/`, `session-store.db` (SQLite), `command-history-state/`, the JetBrains plugin's sessions. Honors `COPILOT_HOME` |
+| **Copilot Chat in VS Code** | `chatSessions/` and `emptyWindowChatSessions/` in VS Code's storage, VS Code Insiders and VSCodium too |
 | | Aider and SpecStory write into the project folder, so spillage checks the current folder plus every folder your Claude Code and Codex sessions ran in |
 | **Agent settings** | MCP servers and allowed commands, see [below](#settings) |
 | **anything else** | `spillage --path <file or folder>`, any mix of JSONL, JSON and text |
@@ -393,7 +394,7 @@ Sources: the [gitleaks](https://github.com/gitleaks/gitleaks) and [TruffleHog](h
 
 ```
  agent logs ──▶ discover ──▶ raw text ──▶ 87 rules ──▶ validate ──▶ locate ──▶ dedupe ──▶ report
- (13 agents)     per agent    per file     literal-     checksums,   parse only  one finding
+ (14 agents)     per agent    per file     literal-     checksums,   parse only  one finding
                                           prefix       entropy,     the JSON    per secret
                                           regexes      placeholders line with
                                           on all cores              a match

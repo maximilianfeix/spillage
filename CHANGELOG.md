@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- more of what the agents keep on disk is read. Claude Code: tool output that was too big for the transcript (`tool-results/`, where a dumped `.env` lands), superseded sessions, project memory, `session-env/`, `tasks/`, `plans/` and `debug/`. Codex: the copies of every session it keeps in SQLite next to the rollout files. Gemini CLI: sessions in the JSONL format it writes since 0.39, subagents included. OpenCode: its SQLite database. Qwen Code: the folder newer versions use. Cursor: the agent's transcripts under `~/.cursor`. Copilot CLI: its search database, command history and the JetBrains plugin's sessions, with `COPILOT_HOME`
+- Copilot Chat in VS Code, VS Code Insiders and VSCodium is the fourteenth agent
+- Claude Desktop from the Microsoft Store: its MCP settings are found in the app's private folder
+
+### Changed
+- `scrub` says so for every database that still holds a key (Codex, OpenCode and Copilot CLI keep copies of a session in SQLite). It rewrites the session files and leaves the databases alone
+- findings in Copilot CLI logs say whether you, a tool or the model wrote the key; before, all of them were "session metadata"
+
 ## [0.9.2] - 2026-10-10
 
 ### Changed

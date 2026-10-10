@@ -56,6 +56,7 @@ def home(tmp_path, monkeypatch) -> FakeHome:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(root / ".config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(root / ".local" / "share"))
     monkeypatch.setenv("APPDATA", str(root / "AppData"))
+    monkeypatch.setenv("LOCALAPPDATA", str(root / "AppData" / "Local"))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))

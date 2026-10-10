@@ -47,8 +47,20 @@ def _app_support() -> List[Path]:
         return [home / "Library" / "Application Support"]
     if os.name == "nt":
         appdata = os.environ.get("APPDATA")
-        return [Path(appdata)] if appdata else []
+        roots = [Path(appdata)] if appdata else []
+        # apps from the Microsoft Store (Claude Desktop) get a private copy of %APPDATA%
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            roots += sorted(Path(local).glob("Packages/*/LocalCache/Roaming"))
+        return roots
     return [Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))]
+
+
+DATABASE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".vscdb")
+
+
+def is_database(path: Path) -> bool:
+    return path.suffix.lower() in DATABASE_SUFFIXES
 
 
 def _keys(path: JsonPath) -> set:
@@ -389,16 +401,93 @@ _ROLE_MAP = {
 _ROLE_MAP = {k: v for k, v in _ROLE_MAP.items() if v}
 
 
+# ---- SQLite-backed agents --------------------------------------------------------------------
+
+class SQLiteSource(Source):
+    """Agents that keep sessions in SQLite. Each row becomes one JSON line (text columns only,
+    JSON columns parsed), so the usual matching, context and dedup apply. Opened read-only and
+    immutable, so a running agent is never blocked."""
+
+    def load(self, path: Path) -> Optional[str]:
+        import sqlite3
+
+        if not is_database(path):  # the same agent's JSONL and text files
+            return Source.load(self, path)
+        try:
+            conn = open_sqlite(path)
+        except sqlite3.Error:
+            return None
+        lines = []
+        try:
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+            for table in tables:
+                if table.startswith("sqlite_"):
+                    continue
+                cur = conn.execute(f'SELECT * FROM "{table}"')
+                cols = [d[0] for d in cur.description]
+                for row in cur:
+                    lines.append(json.dumps(_sqlite_record(table, cols, row), ensure_ascii=False, default=str))
+        except sqlite3.Error:
+            # one table that can't be read (a virtual table of an extension we don't have) must
+            # not hide the rows of the others
+            if not lines:
+                return None
+        finally:
+            conn.close()
+        return "\n".join(lines) or None
+
+    def document(self, path: Path, text: str) -> Document:
+        return Document(self, path, text, kind="jsonl" if is_database(path) else None)
+
+    def update_state(self, record: Any, state: dict) -> None:
+        if not isinstance(record, dict):
+            return
+        for key in ("session_id", "sessionId", "thread_id"):
+            if isinstance(record.get(key), (str, int)):
+                state["session"] = str(record[key])
+        if record.get("table") == "sessions" and isinstance(record.get("id"), (str, int)):
+            state["session"] = str(record["id"])
+        for key in ("working_dir", "cwd"):
+            if isinstance(record.get(key), str):
+                state["project"] = record[key]
+
+
+def _sqlite_record(table: str, cols: List[str], row: tuple) -> dict:
+    record: Dict[str, Any] = {"table": table}
+    for col, value in zip(cols, row):
+        if isinstance(value, bytes):
+            try:
+                value = value.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # compressed or binary
+        if isinstance(value, str) and value[:1] in "[{":
+            try:
+                value = json.loads(value)
+            except ValueError:
+                pass
+        record[col] = value
+    return record
+
+
 @register
 class ClaudeCode(Source):
     name = "claude"
     label = "Claude Code"
     patterns = (
         "projects/**/*.jsonl",
+        # a session that was rewritten keeps its old copy under this name
+        "projects/**/*.jsonl.superseded-*",
+        # tool output too big for the transcript is written here instead: a dumped .env, a `printenv`
+        "projects/**/tool-results/*",
+        "projects/*/memory/**/*.md",
         "history.jsonl",
         "file-history/**/*",
         "shell-snapshots/*",
+        "session-env/**/*",
         "todos/*.json",
+        "tasks/**/*.json",
+        "plans/**/*.md",
+        "debug/**/*",
         "paste-cache/**/*",
     )
 
@@ -435,7 +524,13 @@ class ClaudeCode(Source):
             return Origin.FILE
         if "paste-cache" in parts:
             return Origin.PROMPT
+        if "tool-results" in parts or "shell-snapshots" in parts or "session-env" in parts:
+            return Origin.TOOL
         return Origin.OTHER
+
+    def document(self, path: Path, text: str) -> Document:
+        superseded = ".jsonl.superseded-" in path.name
+        return Document(self, path, text, kind="jsonl" if superseded else None)
 
 
 def _block_types(record: dict, path: JsonPath) -> set:
@@ -453,18 +548,27 @@ def _block_types(record: dict, path: JsonPath) -> set:
 
 
 @register
-class Codex(Source):
+class Codex(SQLiteSource):
+    """Codex writes each session as a JSONL "rollout" and keeps copies of it in SQLite next to it:
+    the thread history, the list of threads with their first prompt, and its own log."""
+
     name = "codex"
     label = "Codex CLI"
-    patterns = ("sessions/**/*.jsonl", "archived_sessions/**/*.jsonl", "history.jsonl", "log/*.log")
+    patterns = (
+        "sessions/**/*.jsonl", "archived_sessions/**/*.jsonl", "history.jsonl", "log/*.log",
+        # not logs_*.sqlite: Codex's own diagnostics, full of the session tokens of its own login
+        "thread_history_*.sqlite", "state_*.sqlite", "memories_*.sqlite",
+    )  # fmt: skip
 
     def roots(self) -> List[Path]:
-        env = os.environ.get("CODEX_HOME")
-        roots = [Path(env)] if env else []
+        roots = [Path(os.environ[name]) for name in ("CODEX_HOME", "CODEX_SQLITE_HOME") if os.environ.get(name)]
         return roots + [self.home / ".codex"]
 
     def update_state(self, record: Any, state: dict) -> None:
         if not isinstance(record, dict):
+            return
+        if "table" in record:  # a database row
+            SQLiteSource.update_state(self, record, state)
             return
         payload = record.get("payload")
         if record.get("type") == "session_meta" and isinstance(payload, dict):
@@ -480,6 +584,10 @@ class Codex(Source):
             return Origin.OTHER
         if "text" in record and "session_id" in record and "ts" in record:
             return Origin.HISTORY
+        if record.get("table") == "threads" and _keys(path) & {"first_user_message", "preview", "title"}:
+            return Origin.PROMPT
+        if isinstance(record.get("item_json"), dict):  # thread history: the rollout's items again
+            record = {"payload": record["item_json"]}
         payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
         kind = payload.get("type")
         if kind in ("function_call_output", "custom_tool_call_output", "exec_command_end", "local_shell_call_output"):
@@ -502,7 +610,10 @@ class Codex(Source):
 class GeminiCLI(Source):
     name = "gemini"
     label = "Gemini CLI"
-    patterns = ("tmp/*/chats/*.json", "tmp/*/logs.json", "tmp/*/checkpoint*.json", "history/**/*.json")
+    patterns = (
+        "tmp/*/chats/**/*.json", "tmp/*/chats/**/*.jsonl",  # JSONL since 0.39, subagents in subfolders
+        "tmp/*/logs.json", "tmp/*/checkpoint*.json", "history/**/*.json",
+    )  # fmt: skip
 
     def roots(self) -> List[Path]:
         return [self.home / ".gemini"]
@@ -516,10 +627,13 @@ class GeminiCLI(Source):
 
 
 @register
-class OpenCode(Source):
+class OpenCode(SQLiteSource):
     name = "opencode"
     label = "OpenCode"
-    patterns = ("storage/message/**/*.json", "storage/part/**/*.json", "storage/session/**/*.json")
+    patterns = (
+        "storage/message/**/*.json", "storage/part/**/*.json", "storage/session/**/*.json",
+        "opencode.db",  # 1.x and later
+    )  # fmt: skip
 
     def roots(self) -> List[Path]:
         base = os.environ.get("XDG_DATA_HOME")
@@ -528,8 +642,12 @@ class OpenCode(Source):
 
     def update_state(self, record: Any, state: dict) -> None:
         if isinstance(record, dict):
-            if isinstance(record.get("sessionID"), str):
-                state["session"] = record["sessionID"]
+            SQLiteSource.update_state(self, record, state)
+            for key in ("sessionID", "session_id"):
+                if isinstance(record.get(key), str):
+                    state["session"] = record[key]
+            if isinstance(record.get("directory"), str):
+                state["project"] = record["directory"]
             path = record.get("path")
             if isinstance(path, dict) and isinstance(path.get("cwd"), str):
                 state["project"] = path["cwd"]
@@ -568,13 +686,60 @@ class Continue(Source):
 
 
 @register
-class CopilotCLI(Source):
+class CopilotCLI(SQLiteSource):
     name = "copilot"
     label = "GitHub Copilot CLI"
-    patterns = ("session-state/**/*.jsonl", "history-session-state/*.json", "logs/*.log")
+    patterns = (
+        "session-state/**/*.jsonl", "history-session-state/*.json", "logs/*.log", "command-history-state/**/*",
+        "session-store.db",  # every turn again, for search across sessions
+        "jb/*/*.jsonl",  # sessions of the JetBrains plugin
+    )  # fmt: skip
 
     def roots(self) -> List[Path]:
-        return [self.home / ".copilot"]
+        env = os.environ.get("COPILOT_HOME")
+        return ([Path(env)] if env else []) + [self.home / ".copilot"]
+
+    def origin(self, record: Any, path: JsonPath) -> str:
+        keys = _keys(path)
+        if "user_message" in keys:
+            return Origin.PROMPT
+        if "assistant_response" in keys:
+            return Origin.ASSISTANT
+        kind = record.get("type") if isinstance(record, dict) else None
+        if isinstance(kind, str):  # events are named user.message, assistant.message, tool.execution_complete
+            family = kind.split(".", 1)[0]
+            if family == "user":
+                return Origin.PROMPT
+            if family == "tool":
+                return Origin.TOOL
+            if family == "assistant":
+                return Origin.TOOL if keys & _TOOL_KEYS else Origin.ASSISTANT
+        return generic_origin(record, path)
+
+
+@register
+class CopilotChat(Source):
+    """Copilot Chat inside VS Code keeps each chat as a journal of changes, one JSON line each."""
+
+    name = "copilot-chat"
+    label = "Copilot Chat (VS Code)"
+    patterns = tuple(
+        f"{editor}/User/{where}"
+        for editor in ("Code", "Code - Insiders", "VSCodium")
+        for where in (
+            "workspaceStorage/*/chatSessions/*.jsonl",
+            "workspaceStorage/*/chatSessions/*.json",  # before 1.109
+            "globalStorage/emptyWindowChatSessions/*.jsonl",
+            "globalStorage/emptyWindowChatSessions/*.json",
+            "workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",
+        )
+    )
+
+    def roots(self) -> List[Path]:
+        return _app_support()
+
+    def session_for(self, path: Path, state: dict) -> str:
+        return path.stem
 
 
 # ---- Cursor ------------------------------------------------------------------------------------
@@ -597,14 +762,20 @@ class Cursor(Source):
 
     name = "cursor"
     label = "Cursor"
-    patterns = ("Cursor/User/globalStorage/state.vscdb", "Cursor/User/workspaceStorage/*/state.vscdb")
+    patterns = (
+        "Cursor/User/globalStorage/state.vscdb", "Cursor/User/workspaceStorage/*/state.vscdb",
+        # the agent CLI and agent mode, under ~/.cursor
+        "projects/*/agent-transcripts/**/*.jsonl", "projects/*/agent-transcripts/**/*.txt",
+    )  # fmt: skip
 
     def roots(self) -> List[Path]:
-        return _app_support()
+        return [*_app_support(), self.home / ".cursor"]
 
     def load(self, path: Path) -> Optional[str]:
         import sqlite3
 
+        if not is_database(path):
+            return Source.load(self, path)
         try:
             # immutable: never take a lock on a database Cursor may have open
             conn = open_sqlite(path)
@@ -631,7 +802,7 @@ class Cursor(Source):
         return "\n".join(line for line in lines if line) or None
 
     def document(self, path: Path, text: str) -> Document:
-        return Document(self, path, text, kind="jsonl")
+        return Document(self, path, text, kind="jsonl" if is_database(path) else None)
 
     def update_state(self, record: Any, state: dict) -> None:
         if isinstance(record, dict) and isinstance(record.get("key"), str):
@@ -809,73 +980,13 @@ class QwenCode(GeminiCLI):
 
     name = "qwen"
     label = "Qwen Code"
-    patterns = ("tmp/*/chats/*.json", "tmp/*/logs.json", "tmp/*/checkpoint*.json", "tmp/*/checkpoints/*.json")
+    patterns = (
+        "tmp/*/chats/*.json", "tmp/*/logs.json", "tmp/*/checkpoint*.json", "tmp/*/checkpoints/*.json",
+        "projects/*/chats/**/*.jsonl",  # where newer versions keep them
+    )  # fmt: skip
 
     def roots(self) -> List[Path]:
         return [self.home / ".qwen"]
-
-
-# ---- SQLite-backed agents --------------------------------------------------------------------
-
-class SQLiteSource(Source):
-    """Agents that keep sessions in SQLite. Each row becomes one JSON line (text columns only,
-    JSON columns parsed), so the usual matching, context and dedup apply. Opened read-only and
-    immutable, so a running agent is never blocked."""
-
-    def load(self, path: Path) -> Optional[str]:
-        import sqlite3
-
-        try:
-            conn = open_sqlite(path)
-        except sqlite3.Error:
-            return None
-        lines = []
-        try:
-            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-            for table in tables:
-                if table.startswith("sqlite_"):
-                    continue
-                cur = conn.execute(f'SELECT * FROM "{table}"')
-                cols = [d[0] for d in cur.description]
-                for row in cur:
-                    lines.append(json.dumps(_sqlite_record(table, cols, row), ensure_ascii=False, default=str))
-        except sqlite3.Error:
-            return None
-        finally:
-            conn.close()
-        return "\n".join(lines) or None
-
-    def document(self, path: Path, text: str) -> Document:
-        return Document(self, path, text, kind="jsonl")
-
-    def update_state(self, record: Any, state: dict) -> None:
-        if not isinstance(record, dict):
-            return
-        for key in ("session_id", "sessionId"):
-            if isinstance(record.get(key), (str, int)):
-                state["session"] = str(record[key])
-        if record.get("table") == "sessions" and isinstance(record.get("id"), (str, int)):
-            state["session"] = str(record["id"])
-        for key in ("working_dir", "cwd"):
-            if isinstance(record.get(key), str):
-                state["project"] = record[key]
-
-
-def _sqlite_record(table: str, cols: List[str], row: tuple) -> dict:
-    record: Dict[str, Any] = {"table": table}
-    for col, value in zip(cols, row):
-        if isinstance(value, bytes):
-            try:
-                value = value.decode("utf-8")
-            except UnicodeDecodeError:
-                continue  # compressed or binary
-        if isinstance(value, str) and value[:1] in "[{":
-            try:
-                value = json.loads(value)
-            except ValueError:
-                pass
-        record[col] = value
-    return record
 
 
 @register

@@ -25,10 +25,10 @@ from .models import Finding, Location, fingerprint
 from .rules import Rule, get_rules
 from .scanner import Scanner, _lines_before, hits_in
 from .scrub import scrub_file
-from .sources import Source
+from .sources import DATABASE_SUFFIXES, Source
 
 TAIL = 64  # bytes before the read offset that must stay the same, or the file was rewritten
-NOT_SCRUBBABLE = (".vscdb", ".db")
+NOT_SCRUBBABLE = DATABASE_SUFFIXES
 
 
 @dataclass
