@@ -33,7 +33,7 @@ MARK = "spillage hook"
 # `"C:\…\spillage.exe" hook …` on Windows, or `python -m spillage hook …`.
 _HOOK_COMMAND = re.compile(r"""(?:^|[\s"'\\/])spillage(?:\.exe)?["']?\s+hook\b""", re.IGNORECASE)
 ALLOW_WORD = "spillage:allow"
-TOOL_MATCHER = "Read|Grep|Bash|NotebookRead|mcp__.*read.*"
+TOOL_MATCHER = "Read|Grep|Bash|PowerShell|NotebookRead|mcp__.*read.*"
 
 # Files that are nothing but secrets. Templates like .env.example are fine to read.
 SECRET_FILES = (
@@ -47,8 +47,10 @@ SAFE_FILES = ("*.example", "*.sample", "*.template", "*.dist", "*.defaults", "*.
 
 _READERS = {
     "cat", "less", "more", "head", "tail", "bat", "batcat", "strings", "xxd", "od", "hexdump", "grep",
-    "rg", "ag", "awk", "sed", "sort", "nl", "tac", "cut", "base64", "type", "get-content", "gc", "jq",
-    "yq", "source", ".", "python", "python3", "node", "ruby", "perl", "openssl",
+    "egrep", "fgrep", "rg", "ag", "awk", "sed", "sort", "nl", "tac", "cut", "base64", "type", "jq", "yq",
+    "source", ".", "python", "python3", "node", "ruby", "perl", "openssl",
+    # PowerShell and cmd
+    "get-content", "gc", "select-string", "sls", "import-csv", "findstr",
 }
 _ENV_DUMPS = [
     re.compile(r"(?:^|[;&|]\s*)(?:printenv|env|export\s+-p|set|declare\s+-x)\s*(?:$|[;&|>])"),
@@ -59,21 +61,61 @@ _ENV_DUMPS = [
     re.compile(r"\bgcloud\s+auth\s+print-access-token\b"),
     re.compile(r"\bop\s+(?:read|item\s+get)\b[^;&|]*(?:--reveal|op://)"),
     re.compile(r"\bcat\s+/proc/(?:self|\d+)/environ\b"),
+    # the whole environment from PowerShell, Python or Node
+    re.compile(r"\[(?:System\.)?Environment\]::GetEnvironmentVariables\b", re.IGNORECASE),
+    re.compile(r"\bprint\(\s*(?:dict\(\s*)?os\.environ\s*\)"),
+    re.compile(r"\bconsole\.log\(\s*process\.env\s*\)"),
 ]
+# PowerShell's Env: drive: `Get-ChildItem Env:` lists everything, `Get-Item Env:GITHUB_TOKEN` one value
+_ENV_DRIVE = re.compile(
+    r"\b(?:get-childitem|gci|dir|ls|get-item|gi|get-content|gc)\s+(?:-(?:literal)?path\s+)?[\"']?env:[\\/]?([\w*?]*)",
+    re.IGNORECASE,
+)
+_GET_VARIABLE = re.compile(r"GetEnvironmentVariable\(\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']", re.IGNORECASE)
+_READ_CALL = re.compile(r"::(?:ReadAllText|ReadAllLines|ReadAllBytes|ReadLines|OpenText)\(\s*[\"']([^\"']+)[\"']",
+                        re.IGNORECASE)
+# Commands whose whole job is to print their arguments, and a variable named like a secret in them.
+_PRINTERS = {"echo", "printf", "print", "printenv", "write-output", "write-host"}
+# `$NAME`, `${NAME}` and `$env:NAME`, but not `${NAME:+set}`, which only says whether it is set
+_VARIABLE = re.compile(r"\$(?:env:)?\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?!\w)(?!:\+)", re.IGNORECASE)
+_SINGLE_QUOTED = re.compile(r"'[^']*'")
+# TOKEN_COUNT or API_KEY_FILE describe a secret, they aren't one
+_NOT_THE_VALUE = {"COUNT", "LENGTH", "LEN", "NAME", "FILE", "PATH", "DIR", "ID", "TTL", "EXPIRY", "EXPIRES", "TYPE",
+                  "HEADER", "PREFIX", "ENABLED", "SET"}
+_PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ag", "findstr"}  # their first argument is what to look for
+_INTERPRETERS = {"python", "python3", "node", "ruby", "perl"}
+_QUOTED = re.compile(r"""["']([^"']+)["']""")
+_WRAPPERS = {"sudo", "command", "exec", "time", "nice", "xargs"}
+_SHELLS = {"bash", "sh", "zsh", "dash", "fish", "pwsh", "powershell", "cmd"}
 
 
 def is_secret_file(path: str) -> bool:
-    p = path.replace("\\", "/").rstrip("/")
+    # lower case: macOS and Windows open `.ENV` as `.env`
+    p = path.replace("\\", "/").rstrip("/").lower()
     name = p.rsplit("/", 1)[-1]
-    if any(fnmatch.fnmatch(name, pat) for pat in SAFE_FILES):
+    if any(fnmatch.fnmatchcase(name, pat) for pat in SAFE_FILES):
         return False
     for pat in SECRET_FILES:
         if "/" in pat:
             if p == pat or p.endswith("/" + pat):
                 return True
-        elif fnmatch.fnmatch(name, pat):
+        elif fnmatch.fnmatchcase(name, pat):
             return True
     return False
+
+
+def _names_a_secret(name: str) -> bool:
+    from .envfiles import is_secret_name, name_words
+
+    return is_secret_name(name) and not (name_words(name) & _NOT_THE_VALUE)
+
+
+def _prints_secret_variable(verb: str, segment: str, words: List[str]) -> Optional[str]:
+    """`echo $STRIPE_SECRET_KEY`, `printenv GITHUB_TOKEN`, `Write-Output $env:OPENAI_API_KEY`.
+    Using a variable is fine (`curl -H "Authorization: Bearer $TOKEN"`), printing it is not."""
+    # '$NAME' in single quotes is just text
+    names = words[1:] if verb == "printenv" else _VARIABLE.findall(_SINGLE_QUOTED.sub("", segment))
+    return next((name for name in names if _names_a_secret(name)), None)
 
 
 def _words(command: str) -> List[str]:
@@ -83,33 +125,87 @@ def _words(command: str) -> List[str]:
         return command.split()
 
 
-def risky_command(command: str) -> Optional[str]:
-    """Why a shell command would leak secrets into the conversation, or None."""
+def _inner_script(verb: str, words: List[str]) -> Optional[str]:
+    """The script in `bash -c '…'`, `pwsh -Command "…"` or `cmd /c …`."""
+    if verb.rsplit(".", 1)[0] not in _SHELLS:
+        return None
+    for i, word in enumerate(words[1:], 1):
+        flag = word.lower()
+        if flag in ("-command", "/c", "/k") or (flag.startswith("-") and not flag.startswith("--") and "c" in flag[1:]):
+            return " ".join(words[i + 1 :]) or None
+    return None
+
+
+def risky_command(command: str, powershell: bool = False) -> Optional[str]:
+    """Why a shell command would leak secrets into the conversation, or None.
+
+    In PowerShell a backslash is part of a path and not an escape, so `powershell=True` keeps
+    `C:\\Users\\me\\.ssh\\id_rsa` in one piece."""
+    if powershell:
+        command = command.replace("\\", "/")
     for pattern in _ENV_DUMPS:
         if pattern.search(command):
             return "it prints environment variables or stored credentials"
+    for match in _ENV_DRIVE.finditer(command):
+        name = match.group(1)
+        if not name or "*" in name or "?" in name or _names_a_secret(name):
+            return "it prints environment variables or stored credentials"
+    for match in _GET_VARIABLE.finditer(command):
+        if _names_a_secret(match.group(1)):
+            return f"it prints {match.group(1)}, which looks like a secret"
+    for match in _READ_CALL.finditer(command):
+        if is_secret_file(match.group(1)):
+            return f"it reads {match.group(1)}, which holds secrets"
     for segment in re.split(r"[;&|]+|\$\(|`", command):
-        words = _words(segment.strip())
+        # `cat<.env` reads the same file as `cat < .env`
+        words = _words(re.sub(r"(?<![<\d])<(?!<)", " < ", segment).strip())
         if not words:
             continue
         verb = os.path.basename(words[0]).lower()
-        if verb in ("sudo", "command", "exec", "time", "nice"):
+        if verb in _WRAPPERS:
+            # `sudo cat .env`, `xargs -0 cat .env`: the command is the first word that isn't an option
             words = words[1:]
+            while words and words[0].startswith("-"):
+                words = words[1:]
             verb = os.path.basename(words[0]).lower() if words else ""
+        script = _inner_script(verb, words)
+        if script and script != command:
+            reason = risky_command(script, powershell or verb.startswith(("pwsh", "powershell")))
+            if reason:
+                return reason
+            continue
+        if verb in _PRINTERS or (len(words) == 1 and verb.startswith("$env:")):  # PowerShell prints a bare value
+            name = _prints_secret_variable(verb, segment, words)
+            if name:
+                return f"it prints {name}, which looks like a secret"
         if verb not in _READERS:
             continue
-        for word in words[1:]:
+        args = words[1:]
+        if verb in _PATTERN_FIRST and not any(a in ("-e", "-f", "--regexp", "--file") for a in args):
+            # `grep -rn credentials src/` looks for a word, it doesn't read a file of that name
+            option = "/" if verb == "findstr" else "-"
+            pattern = next((a for a in args if not a.startswith(option)), None)
+            if pattern is not None:
+                args = args[: args.index(pattern)] + args[args.index(pattern) + 1 :]
+        for word in args:
             target = word.split("=", 1)[-1] if word.startswith("-") else word
             target = target.lstrip("<").rstrip(")`'\"")
-            if target and not target.startswith("-") and is_secret_file(target):
+            is_code = verb in _INTERPRETERS and bool(re.search(r"[\s(){};=]", word))
+            if target and not target.startswith("-") and not is_code and is_secret_file(target):
                 return f"it reads {target}, which holds secrets"
+            if is_code:
+                # a script on the command line: python -c "print(open('.env').read())". Only what it
+                # has in quotes can be a file name; `config.key` is an attribute.
+                for piece in _QUOTED.findall(word):
+                    if is_secret_file(piece):
+                        return f"it reads {piece}, which holds secrets"
     return None
 
 
 # Tool names differ per agent; they all boil down to reading, searching or running a shell.
 READ_TOOLS = {"Read", "NotebookRead", "read_file", "read_many_files"}
 SEARCH_TOOLS = {"Grep", "grep", "search_file_content"}
-SHELL_TOOLS = {"Bash", "run_shell_command", "shell", "local_shell"}
+SHELL_TOOLS = {"Bash", "PowerShell", "run_shell_command", "shell", "local_shell"}
 
 
 def _strings(value: Any) -> List[str]:
@@ -155,7 +251,7 @@ def check_tool(tool: str, tool_input: Any) -> Optional[str]:
         if isinstance(command, list):  # Codex can pass argv, often ["bash", "-lc", "<script>"]
             command = shell_script([str(c) for c in command])
         if isinstance(command, str):
-            return risky_command(command)
+            return risky_command(command, powershell=tool == "PowerShell")
     return None
 
 
