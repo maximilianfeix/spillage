@@ -199,6 +199,24 @@ class JwtRule(Rule):
     def severity_for(self, secret: str) -> Severity:
         return Severity.LOW if jwt_is_public(secret) else Severity.MEDIUM
 
+    def candidates(self, text: str) -> Iterator[re.Match]:
+        """`finditer` would start again at every `eyJ` and read to the end of the run each time:
+        "eyJeyJeyJ…" took a second at 80 KB and four times that for every doubling. A token starts
+        at a boundary, so an `eyJ` in the middle of one is passed over without running the pattern."""
+        match_at = self._regex.match
+        pos = 0
+        while True:
+            start = text.find("eyJ", pos)
+            if start == -1:
+                return
+            if left_boundary_ok(text, start):
+                match = match_at(text, start)
+                if match:
+                    yield match
+                    pos = match.end()
+                    continue
+            pos = start + 3
+
 
 class DiscordBotRule(Rule):
     """Discord bot tokens have no fixed prefix, so the pattern anchors on the two dots in the

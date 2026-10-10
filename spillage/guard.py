@@ -42,6 +42,10 @@ SECRET_FILES = (
     "*.jks", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.ppk", "secrets.yml", "secrets.yaml",
     "secrets.json", ".secrets", "service-account*.json", "*.tfvars", "terraform.tfstate",
     "kubeconfig", ".kube/config", ".aws/credentials", ".docker/config.json", ".vault-token",
+    ".dev.vars", "*.tfstate", "*.tfstate.backup", ".pgpass", ".my.cnf", ".htpasswd",
+    # where the agents and the tools next to them keep their own logins
+    ".claude/.credentials.json", ".codex/auth.json", ".gemini/oauth_creds.json", "gh/hosts.yml",
+    ".config/gcloud/application_default_credentials.json", ".azure/accesstokens.json",
 )
 SAFE_FILES = ("*.example", "*.sample", "*.template", "*.dist", "*.defaults", "*.pub", ".env.*.example")
 
@@ -85,7 +89,12 @@ _NOT_THE_VALUE = {"COUNT", "LENGTH", "LEN", "NAME", "FILE", "PATH", "DIR", "ID",
 _PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ag", "findstr"}  # their first argument is what to look for
 _INTERPRETERS = {"python", "python3", "node", "ruby", "perl"}
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
-_WRAPPERS = {"sudo", "command", "exec", "time", "nice", "xargs"}
+# commands that run the command after them; the ones in _WITH_VALUE take one argument of their own first
+_WRAPPERS = {"sudo", "doas", "command", "builtin", "exec", "time", "nice", "ionice", "xargs", "env", "nohup",
+             "timeout", "stdbuf", "setsid", "watch", "caffeinate", "unbuffer", "chronic"}
+_WITH_VALUE = {"timeout": 1}  # `timeout 5 cat .env`
+_VALUE_OPTIONS = {"-u", "-g", "-n", "-k", "-s", "-C"}  # `sudo -u root`, `nice -n 5`
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELLS = {"bash", "sh", "zsh", "dash", "fish", "pwsh", "powershell", "cmd"}
 
 
@@ -125,6 +134,23 @@ def _words(command: str) -> List[str]:
         return command.split()
 
 
+def _unwrap(words: List[str]) -> List[str]:
+    """The command itself, without what stands in front of it: `FOO=1 sudo -u root timeout 5 cat .env`
+    runs `cat .env`."""
+    for _ in range(8):  # wrappers can be stacked, but not forever
+        while words and _ASSIGNMENT.match(words[0]):
+            words = words[1:]
+        if not words or os.path.basename(words[0]).lower() not in _WRAPPERS:
+            break
+        wrapper = os.path.basename(words[0]).lower()
+        words = words[1:]
+        while words and words[0].startswith("-"):
+            takes_value = words[0] in _VALUE_OPTIONS and len(words) > 1 and not words[1].startswith("-")
+            words = words[2:] if takes_value else words[1:]
+        words = words[_WITH_VALUE.get(wrapper, 0):]
+    return words
+
+
 def _inner_script(verb: str, words: List[str]) -> Optional[str]:
     """The script in `bash -c '…'`, `pwsh -Command "…"` or `cmd /c …`."""
     if verb.rsplit(".", 1)[0] not in _SHELLS:
@@ -157,17 +183,14 @@ def risky_command(command: str, powershell: bool = False) -> Optional[str]:
         if is_secret_file(match.group(1)):
             return f"it reads {match.group(1)}, which holds secrets"
     for segment in re.split(r"[;&|]+|\$\(|`", command):
-        # `cat<.env` reads the same file as `cat < .env`
-        words = _words(re.sub(r"(?<![<\d])<(?!<)", " < ", segment).strip())
+        # `cat<.env` reads the same file as `cat < .env`, and `(cat .env)` the same as `cat .env`
+        words = _words(re.sub(r"(?<![<\d])<(?!<)", " < ", segment).strip().lstrip("({ ").rstrip(")} "))
+        if not words:
+            continue
+        words = _unwrap(words)
         if not words:
             continue
         verb = os.path.basename(words[0]).lower()
-        if verb in _WRAPPERS:
-            # `sudo cat .env`, `xargs -0 cat .env`: the command is the first word that isn't an option
-            words = words[1:]
-            while words and words[0].startswith("-"):
-                words = words[1:]
-            verb = os.path.basename(words[0]).lower() if words else ""
         script = _inner_script(verb, words)
         if script and script != command:
             reason = risky_command(script, powershell or verb.startswith(("pwsh", "powershell")))

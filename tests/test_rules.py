@@ -327,3 +327,24 @@ def test_shapes_that_the_first_version_of_these_rules_missed():
 ])
 def test_lookalikes_of_the_gitleaks_formats(text):
     assert ids(text) == []
+
+
+def test_no_rule_gets_slow_on_text_made_to_hurt_it():
+    """A prompt is scanned by the hook before it is sent, so no input may make a rule crawl.
+    Each rule gets its own keywords and prefixes, repeated: the JWT rule took 4x longer for
+    every doubling of "eyJeyJeyJ…" before it stopped starting over at every `eyJ`."""
+    import time
+
+    size = 200_000
+    slow = []
+    for rule in get_rules():
+        starts = {k for k in rule.keywords if k} or {"=", ":", "."}
+        for start in starts:
+            for text in (start * (size // len(start)), (start + "a") * (size // (len(start) + 1)),
+                         (start + " ") * (size // (len(start) + 1))):
+                began = time.perf_counter()
+                list(rule.find(text))
+                taken = time.perf_counter() - began
+                if taken > 2.0:
+                    slow.append((rule.id, start, round(taken, 2)))
+    assert slow == []
