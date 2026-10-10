@@ -133,7 +133,9 @@ def test_copilot_cli_events_and_its_search_database(home, monkeypatch):
 
 def test_copilot_chat_in_vs_code(home):
     key, empty = fakes.github(), fakes.stripe()
-    user = home.root / "AppData" / "Code" / "User"
+    from spillage.sources import _app_support
+
+    user = _app_support()[0] / "Code" / "User"  # %APPDATA%, ~/Library/Application Support or ~/.config
     write_jsonl(user / "workspaceStorage" / "0a1b" / "chatSessions" / "c1.jsonl", [
         {"kind": 0, "v": {"requests": []}},
         {"kind": 2, "k": ["requests"], "v": [{"message": {"text": f"why does {key} not work"}}]}])
