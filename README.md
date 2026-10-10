@@ -8,6 +8,8 @@
 
 [![tests](https://github.com/maximilianfeix/spillage/actions/workflows/tests.yml/badge.svg)](https://github.com/maximilianfeix/spillage/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13)](https://pypi.org/project/spillage/)
+[![Downloads](https://img.shields.io/pepy/dt/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13&label=downloads)](https://pepy.tech/projects/spillage)
+[![Stars](https://img.shields.io/github/stars/maximilianfeix/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13)](https://github.com/maximilianfeix/spillage/stargazers)
 [![Release](https://img.shields.io/github/v/release/maximilianfeix/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13)](https://github.com/maximilianfeix/spillage/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.9–3.14-FF6B4A?style=flat-square&labelColor=0E0F13)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-FF6B4A?style=flat-square&labelColor=0E0F13)](pyproject.toml)
