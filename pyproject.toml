@@ -40,9 +40,12 @@ spillage = "spillage.cli:entry"
 
 [project.urls]
 Homepage = "https://maximilianfeix.github.io/spillage/"
+Documentation = "https://github.com/maximilianfeix/spillage#readme"
 Repository = "https://github.com/maximilianfeix/spillage"
 Issues = "https://github.com/maximilianfeix/spillage/issues"
 Changelog = "https://github.com/maximilianfeix/spillage/blob/main/CHANGELOG.md"
+"Release Notes" = "https://github.com/maximilianfeix/spillage/releases"
+Security = "https://github.com/maximilianfeix/spillage/security/policy"
 
 [tool.setuptools.dynamic]
 version = { attr = "spillage.__version__" }
