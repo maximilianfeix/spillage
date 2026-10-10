@@ -35,7 +35,7 @@ def render(result: ScanResult, fmt: str = "text", **options) -> str:
         fn = _REPORTERS[fmt]
     except KeyError:
         raise ValueError(f"unknown format {fmt!r} (use one of {', '.join(formats())})") from None
-    return fn(result, **options)
+    return result.hide(fn(result, **options))
 
 
 def agent_label(name: str) -> str:
@@ -79,14 +79,19 @@ def render_text(
 
     if not stats.files:
         out.append(f"  {p('No agent logs found.', 'yellow')} Try --path to point at them.")
+        out.extend(_errors(stats.errors, p, verbose))
         out.append("")
         return "\n".join(out)
 
     if not result.findings:
-        out.append(f"  {p('✓', 'green', 'bold')} {p('Nothing spilled.', 'green', 'bold')} "
-                   f"No secrets in your agent logs.")
+        if stats.errors:
+            out.append(f"  {p('?', 'yellow', 'bold')} {p('No secrets in the files that could be read.', 'bold')}")
+        else:
+            out.append(f"  {p('✓', 'green', 'bold')} {p('Nothing spilled.', 'green', 'bold')} "
+                       f"No secrets in your agent logs.")
         if stats.ignored:
             out.append(p(f"    ({stats.ignored} ignored by fingerprint)", "dim"))
+        out.extend(_errors(stats.errors, p, verbose))
         out.append("")
         return "\n".join(out)
 
@@ -103,6 +108,7 @@ def render_text(
     for f in result.findings:
         out.extend(_finding_block(f, p, verbose))
 
+    out.extend(_errors(stats.errors, p, verbose))
     out.append("")
     if repo:
         out.append(p("  Next steps", "bold"))
@@ -130,6 +136,17 @@ def render_text(
         out.append(p(f"    ({stats.ignored} ignored by fingerprint)", "dim"))
     out.append("")
     return "\n".join(out)
+
+
+def _errors(errors: list, p: Painter, verbose: bool) -> list:
+    """Files the scan could not read. A scan that skipped something must not look complete."""
+    if not errors:
+        return []
+    n = len(errors)
+    more = "" if verbose or n <= 3 else " (--verbose lists them all)"
+    lines = ["", p(f"  ! {n} file{'s' if n != 1 else ''} could not be scanned{more}", "yellow")]
+    lines.extend(p(f"    {ellipsize(short_path(e), width() - 6)}", "dim") for e in (errors if verbose else errors[:3]))
+    return lines
 
 
 def _fg(severity: Severity) -> str:
@@ -174,8 +191,11 @@ def render_markdown(result: ScanResult, **_) -> str:
         f"Scanned **{stats.files}** files ({human_bytes(stats.bytes)}) in {stats.seconds:.1f}s.",
         "",
     ]
+    if stats.errors:
+        noun = "file" if len(stats.errors) == 1 else "files"
+        out += [f"**{len(stats.errors)} {noun} could not be scanned.**", ""]
     if not result.findings:
-        out.append("Nothing spilled. ✅")
+        out.append("No secrets in the files that could be read." if stats.errors else "Nothing spilled. ✅")
         return "\n".join(out) + "\n"
     out += [
         "| Severity | What | Masked | Seen | Sessions | How | Rotate |",
@@ -251,6 +271,14 @@ def render_sarif(result: ScanResult, uri: Optional[Callable[[str], str]] = None,
                             "rules": list(rules.values())}},
         "results": results,
     }
+    if result.stats.errors:
+        # SARIF's place for "the tool ran, but not over everything"
+        run["invocations"] = [{
+            "executionSuccessful": True,
+            "toolExecutionNotifications": [
+                {"level": "warning", "message": {"text": f"could not scan {error}"}} for error in result.stats.errors
+            ],
+        }]
     return json.dumps({"$schema": SARIF_SCHEMA, "version": "2.1.0", "runs": [run]}, indent=2, ensure_ascii=False)
 
 

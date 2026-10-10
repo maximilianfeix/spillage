@@ -188,6 +188,7 @@ class Document:
         self.first_line: Optional[str] = None
         self._line_cache = (0, 0)
         self._record_cache: Tuple[int, Any] = (-1, None)
+        self.unsure: Tuple[str, ...] = ()  # see _in_record
 
     @property
     def is_json(self) -> bool:
@@ -210,6 +211,7 @@ class Document:
     def locate(self, start: int, secret: str) -> Optional[Location]:
         """Where a secret sits. None if it only occurs inside a blob we deliberately skip
         (a base64 image, a thinking signature): those matches are noise."""
+        self.unsure = ()
         lineno = self.line_of(start)
         if self.kind == "jsonl":
             return self._locate_jsonl(start, lineno, secret)
@@ -234,7 +236,12 @@ class Document:
         if record is _UNSET:
             return self._location(lineno, (), Origin.OTHER, state, "")
         self.source.update_state(record, state)
-        return self._in_record(record, (), lineno, secret, state)
+        # the n-th time the key appears on the line is the n-th time it appears in the record: one
+        # record can hold it in an answer and again in a signed thinking block, which scrub must
+        # tell apart
+        return self._in_record(
+            record, (), lineno, secret, state, skip=line.count(secret, 0, start - begin), in_text=line.count(secret)
+        )
 
     def _locate_json(self, lineno: int, secret: str) -> Optional[Location]:
         if self._parsed is _UNSET:
@@ -257,12 +264,31 @@ class Document:
                     return self._in_record(record, (i,), lineno, secret, rstate)
         return None
 
-    def _in_record(self, record: Any, prefix: JsonPath, lineno: int, secret: str, state: dict) -> Optional[Location]:
+    def _in_record(
+        self, record: Any, prefix: JsonPath, lineno: int, secret: str, state: dict,
+        skip: int = 0, in_text: Optional[int] = None,
+    ) -> Optional[Location]:
+        """The string in `record` that holds the secret, passing over its first `skip` occurrences.
+
+        `in_text` is how often the raw line holds it. When the record's strings hold it that often
+        too, the two line up one to one. When they don't (a dict key has it as well, or a blob
+        that isn't looked at), the place can't be told for sure: then it is the first place it
+        appears, and `self.unsure` lists every place it could be, so scrub can stay away from a
+        signed block that is among them."""
         stamp = record.get("timestamp", "") if isinstance(record, dict) else ""
-        for jpath, value in iter_strings(record):
-            if secret in value:
-                origin = self.source.origin(record, jpath)
-                return self._location(lineno, prefix + jpath, origin, state, stamp if isinstance(stamp, str) else "")
+        places = [(jpath, value.count(secret)) for jpath, value in iter_strings(record) if secret in value]
+        exact = in_text is None or in_text == sum(count for _, count in places)
+        self.unsure = () if exact else tuple(format_path(prefix + jpath) for jpath, _ in places)
+        first: Optional[JsonPath] = places[0][0] if places else None
+        seen = 0
+        for jpath, count in places if exact else ():
+            seen += count
+            if seen > skip:
+                first = jpath
+                break
+        if first is not None:
+            origin = self.source.origin(record, first)
+            return self._location(lineno, prefix + first, origin, state, stamp if isinstance(stamp, str) else "")
         if _in_keys(record, secret):
             return self._location(lineno, prefix, self.source.origin(record, ()), state, "")
         return None

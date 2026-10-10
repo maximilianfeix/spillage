@@ -72,7 +72,7 @@ def redact_text(
             location = doc.locate(match.start, secret)
             if location is None or (leave is not None and leave(location)):
                 continue
-            if _in_signed_block(location.json_path):
+            if any(_in_signed_block(place) for place in (location.json_path, *doc.unsure)):
                 if stats is not None:
                     stats["signed"] = stats.get("signed", 0) + 1
                 continue

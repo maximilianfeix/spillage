@@ -109,13 +109,19 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: cen
   const toast = (msg, ms = 1400) => { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), ms); };
   const copy = (text, msg) => { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast(msg), () => toast(text, 6000)); };
 
+  // a scan that could not read a file must not look complete
+  const unread = (D.summary.errors || []).length;
+  const unreadNote = unread ? `${unread} file${unread === 1 ? "" : "s"} could not be scanned` : "";
   document.getElementById("meta").textContent =
-    `${D.generated} · ${D.summary.files} files (${D.size}) from ${D.agents.join(", ") || "nothing"} · ${D.summary.seconds}s`;
+    `${D.generated} · ${D.summary.files} files (${D.size}) from ${D.agents.join(", ") || "nothing"} · ${D.summary.seconds}s`
+    + (unread ? ` · ${unreadNote}` : "");
 
   const F = D.findings;
   if (!F.length) {
     const e = el("div", "card empty");
-    e.append(el("div", "big", "0"), el("p", null, D.summary.files ? "Nothing spilled. No secrets in your agent logs." : "No agent logs found."));
+    const verdict = unread ? `No secrets in the files that could be read. ${unreadNote}.`
+      : D.summary.files ? "Nothing spilled. No secrets in your agent logs." : "No agent logs found.";
+    e.append(el("div", "big", "0"), el("p", null, verdict));
     app.append(e);
     return;
   }

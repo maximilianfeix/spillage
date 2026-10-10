@@ -44,7 +44,7 @@ flowchart LR
 
 ## Rules of the road
 
-- **Never let a full secret out.** `Finding.to_dict()` is the only serialisation and it has no secret field. Tests check every output format against the raw values.
+- **Never let a full secret out.** `Finding.to_dict()` is the only serialisation and it has no secret field. A key can also sit in the metadata (a folder name, a session id), so `ScanResult.to_dict()` and `reporters.render()` pass everything through `hide_secrets()` on the way out. Tests check every output format against the raw values.
 - **Precision over recall.** A new rule needs a positive test and at least one lookalike that must not match. Fake keys are built at runtime in `tests/fakes.py` so they never exist in the repo.
 - **Literal prefix first.** Python's `re` jumps straight to a literal prefix; a leading lookbehind or character class makes it try every offset. That was the difference between 0.2 s and 6 s per rule on real logs.
 - **Raw text, not parsed JSON.** Scanning the file as it is on disk is what makes both the speed and byte-exact scrubbing possible.
