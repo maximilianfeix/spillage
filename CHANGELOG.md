@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-10
+
 ### Added
 - a Claude Code plugin: `/plugin install spillage --marketplace maximilianfeix/spillage` adds the three guard hooks without installing anything else. It runs from the plugin's folder with the Python that is already there
 - `spillage watch` shows desktop notifications on Windows too, as a toast, next to macOS and Linux
