@@ -1,4 +1,4 @@
-name: spillage
+name: Spillage Secret Scan
 description: Find agent transcripts (SpecStory, Aider, Claude Code, Codex...) committed to the repo, and the API keys inside them
 author: maximilianfeix
 branding:
