@@ -7,6 +7,7 @@
 </picture>
 
 [![tests](https://github.com/maximilianfeix/spillage/actions/workflows/tests.yml/badge.svg)](https://github.com/maximilianfeix/spillage/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13)](https://pypi.org/project/spillage/)
 [![Release](https://img.shields.io/github/v/release/maximilianfeix/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13)](https://github.com/maximilianfeix/spillage/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.9–3.14-FF6B4A?style=flat-square&labelColor=0E0F13)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-FF6B4A?style=flat-square&labelColor=0E0F13)](pyproject.toml)
@@ -64,20 +65,20 @@ The Claude Code docs say it themselves: *"Transcripts and history are not encryp
 ## Install
 
 ```bash
-brew install maximilianfeix/tap/spillage
+pipx install spillage
 spillage
-```
-
-Or with [pipx](https://pipx.pypa.io/):
-
-```bash
-pipx install git+https://github.com/maximilianfeix/spillage
 ```
 
 Or run it once without installing anything, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uvx --from git+https://github.com/maximilianfeix/spillage spillage
+uvx spillage
+```
+
+Or with Homebrew:
+
+```bash
+brew install maximilianfeix/tap/spillage
 ```
 
 Python 3.9 or newer, on macOS, Linux and Windows. No dependencies to audit, which seems fair for a tool you point at your secrets.
@@ -483,7 +484,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 - [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
 - [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 87 rules
 - [x] Claude Code plugin, guard for the PowerShell tool, signed releases
-- [ ] PyPI release
+- [x] [PyPI release](https://pypi.org/project/spillage/)
 
 <a id="community"></a>
 

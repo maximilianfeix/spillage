@@ -39,7 +39,8 @@ dev = ["pytest", "hypothesis", "ruff==0.16.9"]
 spillage = "spillage.cli:entry"
 
 [project.urls]
-Homepage = "https://github.com/maximilianfeix/spillage"
+Homepage = "https://maximilianfeix.github.io/spillage/"
+Repository = "https://github.com/maximilianfeix/spillage"
 Issues = "https://github.com/maximilianfeix/spillage/issues"
 Changelog = "https://github.com/maximilianfeix/spillage/blob/main/CHANGELOG.md"
 
