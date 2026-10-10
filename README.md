@@ -10,6 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/maximilianfeix/spillage?style=flat-square&color=FF6B4A&labelColor=0E0F13)](https://github.com/maximilianfeix/spillage/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.9–3.14-FF6B4A?style=flat-square&labelColor=0E0F13)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-FF6B4A?style=flat-square&labelColor=0E0F13)](pyproject.toml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/maximilianfeix/spillage/badge)](https://scorecard.dev/viewer/?uri=github.com/maximilianfeix/spillage)
 [![Network](https://img.shields.io/badge/network-never-FF6B4A?style=flat-square&labelColor=0E0F13)](#faq)
 [![License](https://img.shields.io/badge/license-MIT-FF6B4A?style=flat-square&labelColor=0E0F13)](LICENSE)
 
@@ -315,7 +316,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.8.0
+      - uses: maximilianfeix/spillage@v0.9.0
         with:
           strict: true   # fail on any committed transcript
 ```
@@ -330,7 +331,7 @@ To see them in the **Security tab** and on pull requests too, have it write SARI
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: maximilianfeix/spillage@v0.8.0
+      - uses: maximilianfeix/spillage@v0.9.0
         with:
           sarif: spillage.sarif
       - uses: github/codeql-action/upload-sarif@v3
@@ -347,7 +348,7 @@ Each secret becomes one alert per file, with the masked value, the fingerprint, 
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/maximilianfeix/spillage
-    rev: v0.8.0
+    rev: v0.9.0
     hooks:
       - id: spillage               # block transcripts that contain secrets
       # - id: no-agent-transcripts # or block agent transcripts altogether
@@ -481,6 +482,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 - [x] [Cursor support](https://github.com/maximilianfeix/spillage/issues/7)
 - [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
 - [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 87 rules
+- [x] Claude Code plugin, guard for the PowerShell tool, signed releases
 - [ ] PyPI release
 
 <a id="community"></a>
