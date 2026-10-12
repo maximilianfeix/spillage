@@ -116,14 +116,16 @@ def test_a_folder_with_a_space_is_quoted_whole_so_the_shell_finds_it():
 def test_exposure_is_decided_from_the_file_and_every_folder_above_it(tmp_path):
     from spillage import doctor
 
-    modes = {"home": 0o755, "home/.claude": 0o750, "home/.claude/s.jsonl": 0o640}
+    modes = {"home": 0o755, "home/.claude": 0o755, "home/.claude/s.jsonl": 0o644}
     stat = lambda path: os.stat_result((modes[path.relative_to(tmp_path).as_posix()],) + (0,) * 9)  # noqa: E731
     log, home_dir = tmp_path / "home" / ".claude" / "s.jsonl", tmp_path / "home"
-    assert doctor.readable_by_others(log, home_dir, stat)  # the group gets in all the way
-    modes["home/.claude"] = 0o705  # the group is stopped at the folder, everyone else at the file
-    assert not doctor.readable_by_others(log, home_dir, stat)
-    modes["home/.claude/s.jsonl"] = 0o604
     assert doctor.readable_by_others(log, home_dir, stat)
+    modes["home/.claude/s.jsonl"] = 0o640  # your own group may read it: that is not "other users"
+    assert not doctor.readable_by_others(log, home_dir, stat)
+    modes.update({"home/.claude/s.jsonl": 0o644, "home/.claude": 0o750})
+    assert not doctor.readable_by_others(log, home_dir, stat)
+    modes.update({"home/.claude": 0o755, "home": 0o750})  # Ubuntu's default home
+    assert not doctor.readable_by_others(log, home_dir, stat)
 
 
 def test_retention_shows_claude_codes_default_and_where_to_change_it(home, capsys):

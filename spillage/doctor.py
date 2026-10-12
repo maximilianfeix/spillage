@@ -97,21 +97,21 @@ def check_env(home: Path) -> Check:
 
 
 def readable_by_others(path: Path, home: Path, stat: Callable[[Path], os.stat_result] = os.stat) -> bool:
-    """Whether the group or everyone else can read `path`. That takes the read bit on the file
-    and the search bit on every folder between it and `home`, `home` included: a closed folder
-    on the way keeps what is below it private."""
+    """Whether every user on the machine can read `path`. That takes the read bit for others on
+    the file and their search bit on every folder between it and `home`, `home` included: a
+    closed folder on the way keeps what is below it private. The group is left out, since on
+    most systems it is a group of one, yours."""
     try:
-        open_to = stat(path).st_mode & (modes.S_IRGRP | modes.S_IROTH)
+        if not stat(path).st_mode & modes.S_IROTH:
+            return False
         folder = path.parent
-        while open_to:
-            # a folder's search bit sits two bits below the read bit of the same class
-            open_to &= (stat(folder).st_mode & (modes.S_IXGRP | modes.S_IXOTH)) << 2
+        while stat(folder).st_mode & modes.S_IXOTH:
             if folder == home or folder == folder.parent:
-                break
+                return True
             folder = folder.parent
     except (OSError, ValueError):
-        return False
-    return bool(open_to)
+        pass
+    return False
 
 
 def _chmod_target(root: Path, path: Path, home: Path) -> Path:

@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- `spillage doctor` has two more lines. `perms` (macOS and Linux) counts the log files other users on the machine can read and prints the `chmod` that closes them; a file only counts when every folder on the way lets them in. `retention` shows how long Claude Code keeps its transcripts (`cleanupPeriodDays`, 30 days unless you set it) and where to change that; it never fails the check ([#88](https://github.com/maximilianfeix/spillage/issues/88))
+- `spillage doctor` has two more lines. `perms` (macOS and Linux) counts the log files every user on the machine can read and prints the `chmod` that closes them; a file only counts when every folder on the way lets them in. `retention` shows how long Claude Code keeps its transcripts (`cleanupPeriodDays`, 30 days unless you set it) and where to change that; it never fails the check ([#88](https://github.com/maximilianfeix/spillage/issues/88))
 
 ### Changed
 - the README says "rotate first" right under the three commands, not only in the Scrub section, and the FAQ answers two questions from the launch: whether `guard` catches keys in tool output, and what happens to copies in backups and dotfile repositories

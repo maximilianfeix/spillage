@@ -228,7 +228,7 @@ One screen that says what is still open, and the command for each point:
 
 It exits with `1` while something is open. `spillage doctor -f json` gives the same as data.
 
-`perms` (macOS and Linux) treats the logs like a `.env`: a file counts when the group or everyone else may read it and every folder on the way lets them in. `retention` is there to tell you, not to judge: it never fails the check.
+`perms` (macOS and Linux) treats the logs like a `.env`: a file counts when everyone on the machine may read it and every folder on the way lets them in. `retention` is there to tell you, not to judge: it never fails the check.
 
 <a id="reports"></a>
 

@@ -50,7 +50,7 @@ class FakeHome:
 @pytest.fixture
 def home(tmp_path, monkeypatch) -> FakeHome:
     root = tmp_path / "home"
-    root.mkdir()
+    root.mkdir(mode=0o700)  # a home nobody else can look into, so `doctor` has nothing to say about modes
     monkeypatch.setenv("HOME", str(root))
     monkeypatch.setenv("USERPROFILE", str(root))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(root / ".config"))
