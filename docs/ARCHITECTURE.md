@@ -10,7 +10,7 @@ flowchart LR
         T -->|document| D[Document]
     end
     subgraph rules.py
-        R[Rule strategies<br/>56 + your .env values]
+        R[Rule strategies<br/>100 + your .env values]
     end
     subgraph scanner.py
         J[jobs: file or file part] --> W[process pool]
@@ -37,7 +37,7 @@ flowchart LR
 | `scanner.py` | The pipeline: collect jobs, fan out over processes (big JSONL files split at line breaks), merge hits into one `Finding` per fingerprint. Progress goes out through a callback. | **Pipeline**, **Observer** for progress |
 | `reporters.py`, `html.py` | Output formats, each a function registered by name. None ever gets more than the masked value. | **Registry** |
 | `scrub.py` | Re-runs the rules over raw text and splices markers in; validates JSON before an atomic write. | |
-| `guard.py` | Hook handlers (pure `handle(event, payload) -> (code, message)`) and per-agent config writers described by an `AgentHooks` record. | Data-driven config |
+| `guard.py` | Hook handlers (pure `handle(event, payload) -> (code, message)`) and per-agent config writers described by an `AgentHooks` record. The handlers that run before something happens block with exit code 2; the ones that run after a tool answer with JSON on stdout, which is how Claude Code takes a replaced tool result. | Data-driven config |
 | `watch.py` | Polls logs, reads appended bytes, reuses `Document` and the rules. | |
 | `repo.py` | Maps tracked files to agents and reuses the matching adapter's knowledge through a small wrapper. | **Decorator** around a `Source` |
 | `repo_output.py` | Turns a repo scan into SARIF, Markdown, and GitHub annotations with a job summary. | |

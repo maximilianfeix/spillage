@@ -170,9 +170,11 @@ def open_sqlite(path: Path):
     try:
         conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
-        return conn
     except sqlite3.Error:
-        return sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+    # one row with a broken byte in it must not end the read of the whole table
+    conn.text_factory = lambda raw: raw.decode("utf-8", errors="replace")
+    return conn
 
 
 def read_text_exact(path: Path) -> Optional[str]:
@@ -246,7 +248,7 @@ class Document:
         if self.kind == "jsonl":
             return self._locate_jsonl(start, lineno, secret)
         if self.kind == "json":
-            return self._locate_json(lineno, secret)
+            return self._locate_json(lineno, secret, start)
         state = {"session": "", "project": self.source.project_for(self.path)}
         return self._location(lineno, (), self.source.text_origin_at(self.path, self.text, start), state, "")
 
@@ -273,7 +275,7 @@ class Document:
             record, (), lineno, secret, state, skip=line.count(secret, 0, start - begin), in_text=line.count(secret)
         )
 
-    def _locate_json(self, lineno: int, secret: str) -> Optional[Location]:
+    def _locate_json(self, lineno: int, secret: str, start: int = 0) -> Optional[Location]:
         if self._parsed is _UNSET:
             try:
                 self._parsed = json.loads(self.text)
@@ -285,13 +287,19 @@ class Document:
             return self._location(lineno, (), Origin.OTHER, state, "")
         if isinstance(data, dict):
             self.source.update_state(data, state)
-            return self._in_record(data, (), lineno, secret, state)
+            # which of several places it is, the same way as on a JSONL line: the file can hold
+            # the key in an answer and again in a signed thinking block
+            return self._in_record(
+                data, (), lineno, secret, state, skip=self.text.count(secret, 0, start), in_text=self.text.count(secret)
+            )
         if isinstance(data, list):
             for i, record in enumerate(data):
                 if _contains(record, secret):
                     rstate = dict(state)
                     self.source.update_state(record, rstate)
                     return self._in_record(record, (i,), lineno, secret, rstate)
+        if isinstance(data, str) and secret in data:  # a file that is one JSON string
+            return self._location(lineno, (), Origin.OTHER, state, "")
         return None
 
     def _in_record(
@@ -306,7 +314,9 @@ class Document:
         appears, and `self.unsure` lists every place it could be, so scrub can stay away from a
         signed block that is among them."""
         stamp = record.get("timestamp", "") if isinstance(record, dict) else ""
-        places = [(jpath, value.count(secret)) for jpath, value in iter_strings(record) if secret in value]
+        places = [
+            (jpath, value.count(secret)) for jpath, value in iter_strings(record, max_string=None) if secret in value
+        ]
         exact = in_text is None or in_text == sum(count for _, count in places)
         self.unsure = () if exact else tuple(format_path(prefix + jpath) for jpath, _ in places)
         first: Optional[JsonPath] = places[0][0] if places else None
@@ -354,7 +364,7 @@ _UNSET = object()
 
 
 def _contains(node: Any, secret: str) -> bool:
-    return any(secret in value for _, value in iter_strings(node)) or _in_keys(node, secret)
+    return any(secret in value for _, value in iter_strings(node, max_string=None)) or _in_keys(node, secret)
 
 
 def _in_keys(node: Any, secret: str) -> bool:
@@ -1182,7 +1192,7 @@ class _ConfigDocument(Document):
         self._start = start
         return super().locate(start, secret)
 
-    def _locate_json(self, lineno: int, secret: str) -> Optional[Location]:
+    def _locate_json(self, lineno: int, secret: str, start: int = 0) -> Optional[Location]:
         data = self._parsed
         if isinstance(data, (dict, list)):
             start = self._start

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 
+from .models import Hider
 from .reporters import agent_label, render
 
 
@@ -59,6 +60,7 @@ def github(result, root: Path, strict: bool, md: str) -> None:
     """Annotations (paths relative to the workspace, which is what GitHub resolves them
     against), the job summary, and step outputs."""
     ws = workspace_relative(Path.cwd())
+    hide = Hider([f.secret for f in result.findings])  # a file can be named after the key in it
 
     transcripts = {str((root / r).resolve()) for r in result.transcripts}
     for f in result.findings:
@@ -67,12 +69,12 @@ def github(result, root: Path, strict: bool, md: str) -> None:
             rotate = f" Rotate it: {f.rotate_url}" if f.rotate_url else ""
             in_transcript = str(Path(loc.file).resolve()) in transcripts
             where = "a committed agent transcript" if in_transcript else "a committed file"
-            print(f"::error file={ws(loc.file)}{line},title=spillage: {f.rule_name}::"
-                  f"{f.rule_name} ({f.masked}, {f.fingerprint}) is in {where}.{rotate}")
+            print(hide(f"::error file={ws(loc.file)}{line},title=spillage: {f.rule_name}::"
+                       f"{f.rule_name} ({f.masked}, {f.fingerprint}) is in {where}.{rotate}"))
     if strict:
         for path, agent in result.transcripts.items():
-            print(f"::warning file={ws(root / path)},title=spillage: agent transcript::"
-                  f"{agent_label(agent)} transcript is committed. Add it to .gitignore.")
+            print(hide(f"::warning file={ws(root / path)},title=spillage: agent transcript::"
+                       f"{agent_label(agent)} transcript is committed. Add it to .gitignore."))
     for name, value in (("GITHUB_STEP_SUMMARY", md + "\n"),
                         ("GITHUB_OUTPUT", f"transcripts={len(result.transcripts)}\nsecrets={len(result.findings)}\n")):
         target = os.environ.get(name)

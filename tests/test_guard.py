@@ -125,7 +125,7 @@ def test_install_into_empty_settings(tmp_path):
     command = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert guard.is_hook_command(command) and command.endswith("hook prompt")
     assert data["hooks"]["PreToolUse"][0]["matcher"] == guard.TOOL_MATCHER
-    assert guard.status(path) == {"UserPromptSubmit": True, "PreToolUse": True, "SessionEnd": True}
+    assert guard.status(path) == dict.fromkeys(guard.get_agent("claude").events(), True)
     assert "session-end" in data["hooks"]["SessionEnd"][0]["hooks"][0]["command"]
 
 

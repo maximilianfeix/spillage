@@ -904,6 +904,7 @@ class KnownValueRule(Rule):
         needles = set(self.values)
         for value in self.values:
             needles.add(json.dumps(value, ensure_ascii=False)[1:-1])
+            needles.add(json.dumps(value)[1:-1])  # a log that writes é as \u00e9
         # One pass over the text for all values. Longest first, so the JSON-escaped form of a
         # value wins over its raw form when both match at the same spot.
         ordered = sorted(needles, key=lambda n: (-len(n), n))

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__, guard
-from .models import Origin, Severity
+from .models import Hider, Origin, Severity, hide_secrets
 from .reporters import agent_label, formats, render
 from .rules import get_rules
 from .scanner import Scanner, ScanResult, add_ignore, default_ignore_file, load_ignore, scan_text
@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
                             "folder, local: .claude/settings.local.json")
 
     hook = sub.add_parser("hook")  # called by the agent, not by you
-    hook.add_argument("event", choices=["prompt", "tool", "session-end"])
+    hook.add_argument("event", choices=["prompt", "tool", "tool-output", "tool-failure", "session-end"])
 
     watch = sub.add_parser("watch", help="keep watching the logs and report new secrets as they land")
     watch.add_argument("-a", "--agent", type=_csv, default=[], metavar="NAMES", help="only these agents")
@@ -346,6 +346,8 @@ def cmd_guard(args: argparse.Namespace) -> int:
         print()
         print(p("    prompts with a secret in them are blocked before they're sent", "dim"))
         print(p("    reading .env files, keys and credential files is blocked, also via the shell", "dim"))
+        if "claude" in installed:
+            print(p("    Claude Code: a key in what a tool printed is replaced before the model sees it", "dim"))
         print(p("    when a session ends, its transcript is scrubbed", "dim"))
         print(p("    takes effect in new sessions. Undo: spillage guard uninstall", "dim"))
         if "codex" in installed:
@@ -378,7 +380,8 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
         ticks += 1
         for event in watcher.tick():
             f, loc = event.finding, event.location
-            where = short_path(loc.project) if loc.project else short_path(loc.file)
+            # the folder or the file can be named after the key itself
+            where = hide_secrets(short_path(loc.project) if loc.project else short_path(loc.file), [f.secret])
             how = Origin.DESCRIPTIONS.get(loc.origin, loc.origin)
             print(f"  {p(time.strftime('%H:%M:%S'), 'dim')}  {p.badge(f.severity)} {p(f.rule_name, 'bold')}  "
                   f"{p(f.masked, 'cyan')}  {agent_label(loc.agent)} {p('·', 'dim')} {where}")
@@ -404,8 +407,10 @@ def cmd_repo(args: argparse.Namespace) -> int:
     strict_fail = args.strict and bool(result.transcripts)
     failed = bool(findings) or strict_fail
     rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
+    # a transcript can be named after the key that is in it, and file names go into every format
+    hide = Hider([f.secret for f in findings])
     if args.sarif or args.format == "sarif":
-        sarif = repo_output.sarif(result, root, args.strict)
+        sarif = hide(repo_output.sarif(result, root, args.strict))
         if args.sarif:
             args.sarif.write_text(sarif + "\n", encoding="utf-8")
         if args.format == "sarif":
@@ -418,11 +423,11 @@ def cmd_repo(args: argparse.Namespace) -> int:
         for f in data["findings"]:
             for loc in f["locations"]:
                 loc["file"] = rel(loc["file"])
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+        print(hide(json.dumps(data, indent=2, ensure_ascii=False)))
         return EXIT_FOUND if failed else EXIT_CLEAN
 
     if args.format in ("markdown", "github"):
-        md = repo_output.markdown(result, rel)
+        md = hide(repo_output.markdown(result, rel))
         if args.format == "markdown":
             print(md)
         else:
@@ -441,7 +446,7 @@ def cmd_repo(args: argparse.Namespace) -> int:
         print(f"  {p('●', 'yellow')} {p(headline, 'bold')}"
               f" {p('(anyone who can read the repo can read the conversation)', 'dim')}")
         for path, agent in sorted(result.transcripts.items())[:20]:
-            print(f"      {path}  {p(agent_label(agent), 'dim')}")
+            print(f"      {hide(path)}  {p(agent_label(agent), 'dim')}")
         if n > 20:
             print(p(f"      … and {n - 20} more", "dim"))
     if findings or args.all_files:
