@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__, guard
-from .models import Hider, Origin, Severity, hide_secrets
+from .models import Hider, Origin, Severity
 from .reporters import agent_label, formats, render
 from .rules import get_rules
 from .scanner import Scanner, ScanResult, add_ignore, default_ignore_file, load_ignore, scan_text
@@ -381,7 +381,7 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
         for event in watcher.tick():
             f, loc = event.finding, event.location
             # the folder or the file can be named after the key itself
-            where = hide_secrets(short_path(loc.project) if loc.project else short_path(loc.file), [f.secret])
+            where = Hider([f.secret])(short_path(loc.project) if loc.project else short_path(loc.file))
             how = Origin.DESCRIPTIONS.get(loc.origin, loc.origin)
             print(f"  {p(time.strftime('%H:%M:%S'), 'dim')}  {p.badge(f.severity)} {p(f.rule_name, 'bold')}  "
                   f"{p(f.masked, 'cyan')}  {agent_label(loc.agent)} {p('·', 'dim')} {where}")

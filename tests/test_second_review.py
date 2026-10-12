@@ -29,7 +29,7 @@ def record(text: str) -> str:
 def test_scrubbing_in_place_keeps_what_was_appended_meanwhile(tmp_path):
     key = fakes.github()
     path = tmp_path / "rollout.jsonl"
-    path.write_text(record(f"use {key}"), encoding="utf-8", newline="\n")
+    path.write_bytes(record(f"use {key}").encode())
     original = read_exact(path)
     redacted = original.replace(key, "[REDACTED]")
     later = record("the agent wrote this while the scrub was running")
@@ -41,7 +41,7 @@ def test_scrubbing_in_place_keeps_what_was_appended_meanwhile(tmp_path):
 
 def test_scrubbing_in_place_leaves_a_rewritten_file_alone(tmp_path):
     path = tmp_path / "rollout.jsonl"
-    path.write_text(record("something else entirely"), encoding="utf-8", newline="\n")
+    path.write_bytes(record("something else entirely").encode())
     with pytest.raises(OSError):
         write_in_place(path, "new text\n", original=record("what the scrub started from"))
     assert read_exact(path) == record("something else entirely")
@@ -50,7 +50,7 @@ def test_scrubbing_in_place_leaves_a_rewritten_file_alone(tmp_path):
 def test_scrub_file_in_place_still_redacts(tmp_path):
     key = fakes.github()
     path = tmp_path / "rollout.jsonl"
-    path.write_text(record(f"use {key}"), encoding="utf-8", newline="\n")
+    path.write_bytes(record(f"use {key}").encode())
     assert scrub_file(path, in_place=True) == 1
     assert key not in read_exact(path) and json.loads(read_exact(path))
 
