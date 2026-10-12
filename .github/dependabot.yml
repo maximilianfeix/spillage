@@ -6,3 +6,7 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci"
+    # init, analyze and upload-sarif are one action and only work at the same version
+    groups:
+      codeql:
+        patterns: ["github/codeql-action*"]
