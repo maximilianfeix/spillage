@@ -5,9 +5,11 @@ Each check is a small function that returns what it found and the command that f
 
 from __future__ import annotations
 
+import os
+import stat as modes
 from collections import Counter
 from pathlib import Path
-from typing import List, NamedTuple, Optional
+from typing import Callable, Dict, List, NamedTuple, Optional
 
 from . import guard
 from .models import Origin, Severity
@@ -94,6 +96,95 @@ def check_env(home: Path) -> Check:
     return Check("env", OK, f"looking for {_n(len(values), 'value')} from your projects' .env files")
 
 
+def readable_by_others(path: Path, home: Path, stat: Callable[[Path], os.stat_result] = os.stat) -> bool:
+    """Whether the group or everyone else can read `path`. That takes the read bit on the file
+    and the search bit on every folder between it and `home`, `home` included: a closed folder
+    on the way keeps what is below it private."""
+    try:
+        open_to = stat(path).st_mode & (modes.S_IRGRP | modes.S_IROTH)
+        folder = path.parent
+        while open_to:
+            # a folder's search bit sits two bits below the read bit of the same class
+            open_to &= (stat(folder).st_mode & (modes.S_IXGRP | modes.S_IXOTH)) << 2
+            if folder == home or folder == folder.parent:
+                break
+            folder = folder.parent
+    except (OSError, ValueError):
+        return False
+    return bool(open_to)
+
+
+def _chmod_target(root: Path, path: Path, home: Path) -> Path:
+    """The folder to close for `path`: the agent's own one (`~/.claude`), or below a folder it
+    shares with other programs the first part that is the agent's (`~/.config/goose`)."""
+    if root.parent == home:
+        return root
+    return root / path.relative_to(root).parts[0]
+
+
+def _for_shell(path: str) -> str:
+    """`~/.claude`, or the whole path in quotes when it has a space: a `~` in quotes stays a `~`."""
+    from .term import short_path
+
+    return f'"{path}"' if " " in path else short_path(path)
+
+
+def check_perms(home: Path) -> Optional[Check]:
+    """Only where file modes say who may read; None on Windows."""
+    from .sources import all_sources
+
+    if os.name != "posix":
+        return None
+    cache: Dict[Path, os.stat_result] = {}
+
+    def stat(path: Path) -> os.stat_result:
+        if path not in cache:
+            cache[path] = os.stat(path)
+        return cache[path]
+
+    count, targets = 0, []
+    for cls in all_sources():
+        if cls.name == "config":
+            continue
+        source = cls(home)
+        roots = [r for r in source.roots() if r.is_dir()]
+        for path in source.discover():
+            if not readable_by_others(path, home, stat):
+                continue
+            count += 1
+            root = next((r for r in roots if r in path.parents), path.parent)
+            target = _chmod_target(root, path, home)
+            if target not in targets:
+                targets.append(target)
+    if not count:
+        return Check("perms", OK, "the logs can only be read by you")
+    return Check("perms", TODO, f"{_n(count, 'log file')} can be read by other users on this machine",
+                 "chmod -R go-rwx " + " ".join(_for_shell(str(t)) for t in targets))
+
+
+CLAUDE_KEEPS_DAYS = 30  # cleanupPeriodDays when the settings don't say
+
+
+def check_retention() -> Optional[Check]:
+    """How long Claude Code keeps its transcripts; None without Claude Code. Never a TODO:
+    how long is right is yours to decide."""
+    if not guard.AGENTS["claude"].present():
+        return None
+    from .term import short_path
+
+    settings = guard.settings_path("user", agent="claude")
+    try:
+        days = guard._load(settings).get("cleanupPeriodDays")
+    except (OSError, ValueError):
+        days = None
+    hint = f"set cleanupPeriodDays in {short_path(str(settings))} to keep them for less"
+    if isinstance(days, bool) or not isinstance(days, int) or days < 0:
+        return Check("retention", INFO, f"Claude Code keeps transcripts for {CLAUDE_KEEPS_DAYS} days (its default)",
+                     hint)
+    text = f"Claude Code keeps transcripts for {_n(days, 'day')}"
+    return Check("retention", INFO, text, hint) if days > CLAUDE_KEEPS_DAYS else Check("retention", OK, text)
+
+
 def check_repo(cwd: Path, ignore: set) -> Optional[Check]:
     """Only inside a git repository; None anywhere else."""
     from .repo import scan_repo
@@ -115,7 +206,5 @@ def check_repo(cwd: Path, ignore: set) -> Optional[Check]:
 
 def run(result: ScanResult, home: Path, cwd: Optional[Path], ignore: set) -> List[Check]:
     checks = [check_logs(result), check_leaks(result), check_settings(result), check_guard(), check_env(home)]
-    repo = check_repo(cwd, ignore) if cwd else None
-    if repo:
-        checks.append(repo)
-    return checks
+    extra = [check_perms(home), check_retention(), check_repo(cwd, ignore) if cwd else None]
+    return checks + [c for c in extra if c]

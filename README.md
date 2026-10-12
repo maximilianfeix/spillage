@@ -40,6 +40,8 @@ spillage guard install   # block the next leak
 spillage                 # find what already leaked
 ```
 
+**If it finds a key, rotate it first.** The key went to the model provider when the conversation happened, and `scrub` only cleans your disk. The report links to the page where you rotate each one.
+
 If it finds something on your machine, a star helps the next person find it before their key does.
 
 ### Why
@@ -215,12 +217,18 @@ One screen that says what is still open, and the command for each point:
   ✗ guard     hooks are off for Codex CLI
               → spillage guard install
   ✓ env       looking for 12 values from your projects' .env files
+  ✗ perms     212 log files can be read by other users on this machine
+              → chmod -R go-rwx ~/.codex
+  · retention Claude Code keeps transcripts for 30 days (its default)
+              → set cleanupPeriodDays in ~/.claude/settings.json to keep them for less
   ✓ repo      no agent transcripts committed in this repository
 
-  2 to fix. Run this again when you are done.
+  3 to fix. Run this again when you are done.
 ```
 
 It exits with `1` while something is open. `spillage doctor -f json` gives the same as data.
+
+`perms` (macOS and Linux) treats the logs like a `.env`: a file counts when the group or everyone else may read it and every folder on the way lets them in. `retention` is there to tell you, not to judge: it never fails the check.
 
 <a id="reports"></a>
 
@@ -454,6 +462,22 @@ It passes only for a file that this repository's workflow built from the tagged 
 <br>
 
 No. The key was sent to the model provider as part of the conversation when it happened. Rotate it. `spillage scrub` is for your disk, your backups and your Time Machine, not for undoing that.
+
+</details>
+
+<details>
+<summary><b>Does guard catch a key that shows up in a tool's output?</b></summary>
+<br>
+
+It works one step earlier. The tool hook looks at the command before it runs and blocks the ones that would print a key (`cat .env`, `printenv`, `echo $STRIPE_SECRET_KEY`), so there is no output to catch. It does not filter what a command prints: a hook that runs after the tool cannot take the output back out of the conversation. A key that comes out of a command nobody expected to print one is scrubbed from the transcript when the session ends, and `spillage watch` tells you the moment it lands.
+
+</details>
+
+<details>
+<summary><b>What about Time Machine, iCloud and my dotfiles repository?</b></summary>
+<br>
+
+`scrub` cleans the folders the agents write to. A copy that already went into a backup, a synced folder or a repository is out of its reach, which is one more reason to rotate first: a rotated key is worthless in every copy. To keep new copies from being made, leave the agents' folders (`~/.claude`, `~/.codex`, `~/.gemini`, …) out of your backup and out of the repository you keep your dotfiles in. `spillage repo` finds transcripts that were committed.
 
 </details>
 
