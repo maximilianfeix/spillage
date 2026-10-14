@@ -21,6 +21,7 @@
 - more ways around the tool hook: nine or more wrappers in a row (`sudo sudo … cat .env`, it stopped counting at eight), `busybox cat .env`, interpreters by another name (`python3.12`, `py -3`, `cat.exe`) and `php -r`, `bun -e` and `deno eval` scripts that open a secret file, `git log -p -- .env`, `declare -p` and `typeset -p` without a name, `/proc/<pid>/environ` read by any command, and `xargs -a .env`. Checked against 1,892 real shell commands: no new blocks
 
 ### Changed
+- `spillage scan` exits with `3` when it found nothing but some files could not be read, instead of `0`. Before, a scan that skipped files looked the same as a clean one to a script or CI job. `--exit-zero` still makes it `0`, and the JSON report says `"complete": false`. A file that can't be opened (permission denied, locked) and a database that won't open are now listed as not scanned; before, they were dropped without a word and counted as clean
 - the README says "rotate first" right under the three commands, not only in the Scrub section, and the FAQ answers two questions from the launch: whether `guard` catches keys in tool output, and what happens to copies in backups and dotfile repositories
 
 ## [0.10.0] - 2026-10-10

@@ -73,6 +73,8 @@ class ScanResult:
                 "bytes": self.stats.bytes,
                 "seconds": round(self.stats.seconds, 3),
                 "ignored": self.stats.ignored,
+                # false when some files could not be read: no findings then doesn't mean clean
+                "complete": not self.stats.errors,
                 "agents": self.stats.per_agent,
                 "errors": self.stats.errors,
             },

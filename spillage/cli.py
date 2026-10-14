@@ -21,6 +21,7 @@ from .sources import all_sources, build_sources
 from .term import Painter, Progress, short_path, supports_color
 
 EXIT_CLEAN, EXIT_FOUND, EXIT_USAGE = 0, 1, 2
+EXIT_INCOMPLETE = 3  # nothing found, but some files could not be read
 
 
 def parse_since(value: str) -> float:
@@ -76,7 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("-f", "--format", choices=formats(), default="text", help="output format")
     scan.add_argument("-o", "--output", type=Path, metavar="FILE", help="write the report to a file")
     scan.add_argument("-v", "--verbose", action="store_true", help="list every place a secret was seen")
-    scan.add_argument("--exit-zero", action="store_true", help="exit 0 even when something was found")
+    scan.add_argument("--exit-zero", action="store_true",
+                      help="exit 0 even when something was found or some files could not be read")
     scan.add_argument("--no-color", action="store_true", help="plain output")
 
     check = sub.add_parser("check", help="scan text from an argument or stdin (`pbpaste | spillage check`)")
@@ -242,7 +244,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
               f"({len(result.findings)} finding{'s' if len(result.findings) != 1 else ''})", file=sys.stderr)
     else:
         print(report)
-    return EXIT_FOUND if result.findings and not args.exit_zero else EXIT_CLEAN
+    return exit_code(result, args.exit_zero)
+
+
+def exit_code(result: ScanResult, exit_zero: bool = False) -> int:
+    """1 for findings; 3 when there are none but some files could not be read, so a scan that
+    skipped something can't pass for a clean one; else 0. --exit-zero makes all of them 0."""
+    if exit_zero:
+        return EXIT_CLEAN
+    if result.findings:
+        return EXIT_FOUND
+    return EXIT_INCOMPLETE if result.stats.errors else EXIT_CLEAN
 
 
 def cmd_scrub(args: argparse.Namespace) -> int:

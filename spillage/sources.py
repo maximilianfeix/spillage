@@ -122,13 +122,11 @@ class Source:
 
     # -- reading -------------------------------------------------------------------------
     def load(self, path: Path) -> Optional[str]:
-        """The raw file text, or None for binary and oversized files."""
-        try:
-            if path.stat().st_size > MAX_FILE_BYTES:
-                return None
-        except OSError:
+        """The raw file text, or None for binary and oversized files. A file that can't be read
+        raises OSError: the scan lists it as not scanned instead of counting it as clean."""
+        if path.stat().st_size > MAX_FILE_BYTES:
             return None
-        return read_text_exact(path)
+        return read_text_exact(path, strict=True)
 
     def document(self, path: Path, text: str) -> Document:
         return Document(self, path, text)
@@ -177,14 +175,17 @@ def open_sqlite(path: Path):
     return conn
 
 
-def read_text_exact(path: Path) -> Optional[str]:
+def read_text_exact(path: Path, strict: bool = False) -> Optional[str]:
     """A file's text exactly as on disk: line endings untouched, and a stray invalid byte kept
-    as a surrogate so encoding it back gives the same bytes. None for binary files.
+    as a surrogate so encoding it back gives the same bytes. None for binary files, and for
+    files that can't be read unless `strict`, which raises the OSError instead.
 
     Scanning and scrubbing both read through here, so they always see the same text."""
     try:
         raw = path.read_bytes()
     except OSError:
+        if strict:
+            raise
         return None
     if b"\0" in raw[:8192]:
         return None
@@ -431,6 +432,12 @@ _ROLE_MAP = {k: v for k, v in _ROLE_MAP.items() if v}
 
 # ---- SQLite-backed agents --------------------------------------------------------------------
 
+def unreadable_database(exc: Exception) -> OSError:
+    """A database that won't open is not an empty one. Only the kind of error is kept: SQLite's
+    messages can quote the schema."""
+    return OSError(f"can't read it as a SQLite database ({type(exc).__name__})")
+
+
 class SQLiteSource(Source):
     """Agents that keep sessions in SQLite. Each row becomes one JSON line (text columns only,
     JSON columns parsed), so the usual matching, context and dedup apply. Opened read-only and
@@ -443,14 +450,14 @@ class SQLiteSource(Source):
             return Source.load(self, path)
         try:
             conn = open_sqlite(path)
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as exc:
+            raise unreadable_database(exc) from None
         lines = []
         try:
             tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
             conn.close()
-            return None
+            raise unreadable_database(exc) from None
         try:
             for table in tables:
                 if table.startswith("sqlite_"):
@@ -818,8 +825,8 @@ class Cursor(Source):
         try:
             # immutable: never take a lock on a database Cursor may have open
             conn = open_sqlite(path)
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as exc:
+            raise unreadable_database(exc) from None
         lines = []
         try:
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -834,8 +841,8 @@ class Cursor(Source):
                 marks = ",".join("?" for _ in _CURSOR_ITEM_KEYS)
                 rows = conn.execute(f"SELECT key, value FROM ItemTable WHERE key IN ({marks})", _CURSOR_ITEM_KEYS)
                 lines += [_cursor_line(k, v) for k, v in rows]
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as exc:
+            raise unreadable_database(exc) from None
         finally:
             conn.close()
         return "\n".join(line for line in lines if line) or None

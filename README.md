@@ -200,7 +200,7 @@ spillage completions zsh          tab completion for zsh, bash or fish
 
 Tab completion for commands and options: add `eval "$(spillage completions zsh)"` to your `~/.zshrc` (or `bash` to `~/.bashrc`), or for fish run `spillage completions fish > ~/.config/fish/completions/spillage.fish`.
 
-The exit code is `1` when something was found and `0` when not, so it drops into cron, a shell hook or CI as is. `--exit-zero` turns that off.
+The exit code is `1` when something was found, `3` when nothing was found but some files could not be read (the report lists them, so a skipped file can't pass for a clean one), and `0` when the scan was clean, so it drops into cron, a shell hook or CI as is. `--exit-zero` turns that off.
 
 <a id="doctor"></a>
 
