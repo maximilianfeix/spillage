@@ -41,6 +41,7 @@ flowchart LR
 | `watch.py` | Polls logs, reads appended bytes, reuses `Document` and the rules. | |
 | `repo.py` | Maps tracked files to agents and reuses the matching adapter's knowledge through a small wrapper. | **Decorator** around a `Source` |
 | `repo_output.py` | Turns a repo scan into SARIF, Markdown, and GitHub annotations with a job summary. | |
+| `baseline.py` | Reads and writes the CI baseline: fingerprints accepted for a repository, never a secret. | |
 
 ## Rules of the road
 
@@ -48,3 +49,5 @@ flowchart LR
 - **Precision over recall.** A new rule needs a positive test and at least one lookalike that must not match. Fake keys are built at runtime in `tests/fakes.py` so they never exist in the repo.
 - **Literal prefix first.** Python's `re` jumps straight to a literal prefix; a leading lookbehind or character class makes it try every offset. That was the difference between 0.2 s and 6 s per rule on real logs.
 - **Raw text, not parsed JSON.** Scanning the file as it is on disk is what makes both the speed and byte-exact scrubbing possible.
+
+What spillage trusts and how a secret could leave is in [THREAT_MODEL.md](THREAT_MODEL.md); how detection is measured in [EVALUATION.md](EVALUATION.md).

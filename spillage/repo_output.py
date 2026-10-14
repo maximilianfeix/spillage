@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 
-from .models import Hider
 from .reporters import agent_label, render
 
 
@@ -60,7 +59,7 @@ def github(result, root: Path, strict: bool, md: str) -> None:
     """Annotations (paths relative to the workspace, which is what GitHub resolves them
     against), the job summary, and step outputs."""
     ws = workspace_relative(Path.cwd())
-    hide = Hider([f.secret for f in result.findings])  # a file can be named after the key in it
+    hide = result.scan.hide  # a file can be named after the key in it, accepted by a baseline or not
 
     transcripts = {str((root / r).resolve()) for r in result.transcripts}
     for f in result.findings:

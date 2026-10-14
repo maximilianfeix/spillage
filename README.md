@@ -386,6 +386,21 @@ To see them in the **Security tab** and on pull requests too, have it write SARI
 
 Each secret becomes one alert per file, with the masked value, the fingerprint, how it got there and the rotate link. `spillage repo -f sarif` prints the same.
 
+**A repository that already has findings** can turn the check on without failing every run: record what is there today, commit the file, and only new secrets fail from then on.
+
+```bash
+spillage repo --write-baseline .spillage-baseline.json   # what is there today
+spillage repo --baseline .spillage-baseline.json         # fails only on secrets not in it
+```
+
+```yaml
+      - uses: maximilianfeix/spillage@v0.10.0
+        with:
+          baseline: .spillage-baseline.json
+```
+
+The file holds a fingerprint, the rule and `file:line` for each secret, never the secret or a piece of it, so a reviewer sees what was accepted. A secret is known by its fingerprint: it stays accepted if it moves to another file, and the entry goes stale once it's gone (the report says how many; `--write-baseline` again drops them). Writing it twice over the same repository gives the same bytes. `--strict` still fails on committed transcripts. A baseline is for keys you have rotated or are about to; `.spillageignore` is for strings that aren't secrets at all.
+
 ### pre-commit
 
 ```yaml
