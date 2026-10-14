@@ -79,8 +79,14 @@ def test_a_deep_tool_output_keeps_its_shape():
     assert node.startswith("[REDACTED:github-token:")
 
 
+def test_a_path_nested_in_lists_is_still_checked():
+    deep = [[[".env"]]]
+    assert guard.check_tool("mcp__fs__read_file", {"path": deep})
+    assert guard.check_tool("Read", {"paths": ["a.txt", [".env"]]})
+
+
 def test_a_tool_input_too_deep_to_read_is_blocked():
-    deep = "[" * 5000 + '".env"' + "]" * 5000
+    deep = "[" * 100_000 + '".env"' + "]" * 100_000  # too deep for json on every Python version
     payload = '{"tool_name": "mcp__fs__read_file", "tool_input": {"path": ' + deep + "}}"
     code, _, err = _run("tool", payload)
     assert code == 2

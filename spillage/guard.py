@@ -495,11 +495,16 @@ SHELL_TOOLS = {"Bash", "PowerShell", "run_shell_command", "shell", "local_shell"
 
 
 def _strings(value: Any) -> List[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [v for v in value if isinstance(v, str)]
-    return []
+    """The strings in a tool argument: one path, a list of them, or lists in lists."""
+    out: List[str] = []
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, list):
+            stack.extend(reversed(item))
+    return out
 
 
 def _is_mcp_read(tool: str) -> bool:
