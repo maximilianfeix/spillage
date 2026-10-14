@@ -129,8 +129,10 @@ def test_search_tools_with_a_glob_for_secret_files():
 
 def test_json_nested_too_deep_does_not_crash_the_hook():
     deep = "[" * 100_000 + "]" * 100_000
-    for event in ("prompt", "tool", "tool-output", "tool-failure", "session-end"):
+    for event in ("prompt", "tool-output", "tool-failure", "session-end"):
         assert guard.run_hook(event, io.StringIO(deep), io.StringIO(), io.StringIO()) == 0
+    # a tool call that can't be read can't be checked, so it doesn't go ahead
+    assert guard.run_hook("tool", io.StringIO(deep), io.StringIO(), io.StringIO()) == 2
 
 
 @pytest.mark.parametrize("hooks", [

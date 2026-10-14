@@ -60,7 +60,7 @@ _READERS = {
     "cat", "less", "more", "head", "tail", "bat", "batcat", "strings", "xxd", "od", "hexdump", "grep",
     "egrep", "fgrep", "rg", "ag", "awk", "sed", "sort", "nl", "tac", "cut", "base64", "type", "jq", "yq",
     "source", ".", "python", "python3", "node", "ruby", "perl", "openssl", "diff", "cmp", "paste", "rev",
-    "fold", "column", "uniq", "expand", "iconv", "zcat", "zless", "view", "dd",
+    "fold", "column", "uniq", "expand", "iconv", "zcat", "zless", "view", "dd", "php", "bun", "deno",
     # PowerShell and cmd
     "get-content", "gc", "select-string", "sls", "import-csv", "findstr",
 }
@@ -68,6 +68,8 @@ _READERS = {
 # with its plain quoted text taken out: `git commit -m "block gh auth token"` only talks about one.
 _ENV_DUMPS = [
     re.compile(r"(?:^|[;&|\n]\s*)(?:printenv|env|export(?:\s+-p)?|set|declare\s+-x)\s*(?:$|[;&|>\n])"),
+    # `declare -p` with no name prints every variable and its value; `declare -p PATH` just one
+    re.compile(r"(?:^|[;&|\n]\s*)(?:declare|typeset)\s+-[A-Za-z]*p[A-Za-z]*\s*(?:$|[;&|>\n])"),
     re.compile(r"\bgh\s+auth\s+token\b"),
     re.compile(r"\bgh\s+auth\s+status\b[^;&|\n]*--show-token"),
     re.compile(r"\bsecurity\s+find-(?:generic|internet)-password\b[^;&|\n]*\s-w\b"),
@@ -137,12 +139,12 @@ _SINGLE_QUOTED = re.compile(r"'[^']*'")
 _NOT_THE_VALUE = {"COUNT", "LENGTH", "LEN", "NAME", "FILE", "PATH", "DIR", "ID", "TTL", "EXPIRY", "EXPIRES", "TYPE",
                   "HEADER", "PREFIX", "ENABLED", "SET"}
 _PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ag", "findstr"}  # their first argument is what to look for
-_INTERPRETERS = {"python", "python3", "node", "ruby", "perl"}
+_INTERPRETERS = {"python", "python3", "node", "ruby", "perl", "php", "bun", "deno"}
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
 # commands that run the command after them; the ones in _WITH_VALUE take one argument of their own first
 _WRAPPERS = {"sudo", "doas", "command", "builtin", "exec", "time", "nice", "ionice", "xargs", "env", "nohup",
              "timeout", "stdbuf", "setsid", "watch", "caffeinate", "unbuffer", "chronic", "eval", "iex",
-             "invoke-expression"}
+             "invoke-expression", "busybox", "toybox"}
 _WITH_VALUE = {"timeout": 1}  # `timeout 5 cat .env`
 # the options of each wrapper that are followed by a value: `sudo -u root`, `nice -n 5`. Anything else
 # with a dash stands alone (`sudo -n cat .env`), so the word after it is the command.
@@ -160,6 +162,25 @@ _VALUE_OPTIONS = {
 }
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELLS = {"bash", "sh", "zsh", "dash", "fish", "pwsh", "powershell", "cmd"}
+# the same program under its Windows name, or with its version: cat.exe, python3.12, py -3
+_EXE_SUFFIX = re.compile(r"\.(?:exe|com|cmd|bat)$")
+_VERSIONED = re.compile(r"(python3|python|node|ruby|perl|php)[\d.]*")
+# what a process can read about itself or another: /proc/self/environ is the whole environment
+_PROC_ENVIRON = re.compile(r"(?:^|/)proc/(?:self|thread-self|\d+)(?:/task/\d+)?/environ$")
+
+
+class _TooDeep(Exception):
+    """Commands nested deeper than we follow. Not followed means not checked, so it's blocked."""
+
+
+def _verb(word: str) -> str:
+    """The program a word runs, by the name the lists here use: `/usr/bin/python3.12` -> python3,
+    `C:/Windows/System32/more.com` -> more, `py` (the Windows launcher) -> python."""
+    name = _EXE_SUFFIX.sub("", os.path.basename(word).lower())
+    if name == "py":
+        return "python"
+    versioned = _VERSIONED.fullmatch(name)
+    return versioned.group(1) if versioned else name
 
 
 def is_secret_file(path: str) -> bool:
@@ -169,6 +190,8 @@ def is_secret_file(path: str) -> bool:
     p = re.sub(r"::\$data$", "", p).rstrip(". ") or p
     p = posixpath.normpath(p) if p else p  # `~/.codex/./auth.json`, `config/../.env`
     name = p.rsplit("/", 1)[-1]
+    if _PROC_ENVIRON.search(p):
+        return True
     if any(fnmatch.fnmatchcase(name, pat) for pat in SAFE_FILES):
         return False
     if name.startswith(".") and any(c in name for c in "*?[") and name.strip("*?.") and any(
@@ -209,12 +232,15 @@ def _unwrap(words: List[str]) -> List[str]:
     """The command itself, without what stands in front of it: `FOO=1 sudo -u root timeout 5 cat .env`
     runs `cat .env`. `["printenv"]` for an `env` that is left with nothing to run, since that
     prints every variable."""
-    for _ in range(8):  # wrappers can be stacked, but not forever
+    # Every round takes off at least the wrapper's own name, so this ends; the limit is for a quoted
+    # word that unpacks into more wrappers. Stopping early would let `sudo sudo … cat .env` through,
+    # so running out of rounds is an error the caller blocks on.
+    for _ in range(256):
         while words and _ASSIGNMENT.match(words[0]):
             words = words[1:]
-        if not words or os.path.basename(words[0]).lower() not in _WRAPPERS:
-            break
-        wrapper = os.path.basename(words[0]).lower()
+        if not words or _verb(words[0]) not in _WRAPPERS:
+            return words
+        wrapper = _verb(words[0])
         with_value = _VALUE_OPTIONS.get(wrapper, set())
         words = words[1:]
         while words and words[0].startswith("-"):
@@ -230,7 +256,22 @@ def _unwrap(words: List[str]) -> List[str]:
                 return ["printenv"]
         if len(words) == 1 and " " in words[0]:
             words = _words(words[0])  # watch 'cat .env': the command is one quoted word
-    return words
+    raise _TooDeep()
+
+
+def _xargs_file(words: List[str]) -> Optional[str]:
+    """The file `xargs -a .env …` reads its arguments from (and passes them on, to be printed)."""
+    for i, word in enumerate(words):
+        if _verb(word) != "xargs":
+            continue
+        for option, value in zip(words[i + 1 :], words[i + 2 :] + [""]):
+            if option in ("-a", "--arg-file") and value:
+                return value
+            if option.startswith("--arg-file="):
+                return option.split("=", 1)[1]
+            if option.startswith("-a") and len(option) > 2:
+                return option[2:]
+    return None
 
 
 def _inner_script(verb: str, words: List[str]) -> Optional[str]:
@@ -260,8 +301,11 @@ def _without_heredocs(command: str) -> Tuple[str, List[str]]:
         opener = _HEREDOC.search(line)
         if not opener:
             continue
-        words = _unwrap(_words(re.split(r"[;&|]+", line[: opener.start()])[-1]))
-        verb = os.path.basename(words[0]).lower() if words else ""
+        try:
+            words = _unwrap(_words(re.split(r"[;&|]+", line[: opener.start()])[-1]))
+        except _TooDeep:
+            words = []
+        verb = _verb(words[0]) if words else ""
         if verb.rsplit(".", 1)[0] in _SHELLS:
             continue
         start = i
@@ -309,7 +353,11 @@ def _git_target(words: List[str]) -> Optional[str]:
     args = words[1:]
     while args and args[0].startswith("-"):
         args = args[2:] if args[0] in ("-C", "-c", "--git-dir", "--work-tree") else args[1:]
-    if not args or args[0] not in _GIT_PRINTS:
+    if not args:
+        return None
+    # `git log -p -- .env` prints every version the file ever had; `git log -- .env` only commits
+    patch = args[0] == "log" and any(a in ("-p", "-u", "--patch") or a.startswith("--patch") for a in args)
+    if args[0] not in _GIT_PRINTS and not patch:
         return None
     for word in args[1:]:
         if word.startswith("-"):
@@ -325,6 +373,13 @@ def risky_command(command: str, powershell: bool = False) -> Optional[str]:
 
     In PowerShell a backslash is part of a path and not an escape, so `powershell=True` keeps
     `C:\\Users\\me\\.ssh\\id_rsa` in one piece."""
+    try:
+        return _risky_command(command, powershell)
+    except (_TooDeep, RecursionError):
+        return "it nests commands deeper than spillage follows, so it can't be checked"
+
+
+def _risky_command(command: str, powershell: bool) -> Optional[str]:
     if powershell:
         command = command.replace("\\", "/")
     command, scripts = _without_heredocs(command)
@@ -365,24 +420,27 @@ def risky_command(command: str, powershell: bool = False) -> Optional[str]:
         for word, after in zip(words, words[1:]):
             if word == "<" and is_secret_file(after):  # whatever the command is, this is what it reads
                 return f"it reads {after}, which holds secrets"
-        first = os.path.basename(words[0]).lower()
+        xargs_file = _xargs_file(words)
+        if xargs_file and is_secret_file(xargs_file):
+            return f"it reads {xargs_file}, which holds secrets"
+        first = _verb(words[0])
         if first in _WRAPPERS or first == "ssh":
             # watch 'ls; cat .env', eval "a && cat .env", ssh host 'cat .env': the quoted word is a
             # script of its own
             for word in words[1:]:
                 is_script = re.search(r"[;&|\n]", word) or (first == "ssh" and " " in word)
-                reason = risky_command(word, powershell) if is_script and word != command else None
+                reason = _risky_command(word, powershell) if is_script and word != command else None
                 if reason:
                     return reason
         words = _unwrap(words)
         if not words:
             continue
-        verb = os.path.basename(words[0]).lower()
+        verb = _verb(words[0])
         if verb == "printenv" and len(words) == 1:
             return "it prints environment variables or stored credentials"
         script = _inner_script(verb, words)
         if script and script != command:
-            reason = risky_command(script, powershell or verb.startswith(("pwsh", "powershell")))
+            reason = _risky_command(script, powershell or verb.startswith(("pwsh", "powershell")))
             if reason:
                 return reason
             continue
@@ -505,18 +563,29 @@ def redact_output(value: Any, rules: Sequence[Any], ignore: Iterable[str] = ()) 
             names.append(rule.name_for(match.secret))
         return "".join(pieces) + text[last:] if pieces else text
 
-    def walk(node: Any) -> Any:
-        if isinstance(node, str):
-            return clean(node)
-        if isinstance(node, list):
-            return [walk(item) for item in node]
-        if isinstance(node, dict):
-            if node.get("isImage") is True:
-                return node  # a screenshot: what looks like a key in base64 is noise
-            return {key: item if key == "base64" else walk(item) for key, item in node.items()}
-        return node
+    return map_strings(value, clean), names
 
-    return walk(value), names
+
+def map_strings(value: Any, fn) -> Any:
+    """A copy of a JSON value with `fn` applied to every string in it, the shape kept.
+
+    A loop and not recursion: a tool's result can be nested deeper than Python's stack, and a
+    crash here would hand the output to the model unredacted. A screenshot (`isImage`) and
+    `base64` fields stay as they are: what looks like a key in base64 is noise."""
+    root = [value]
+    stack: List[Tuple[Any, Any]] = [(root, 0)]
+    while stack:
+        parent, key = stack.pop()
+        node = parent[key]
+        if isinstance(node, str):
+            parent[key] = fn(node)
+        elif isinstance(node, list):
+            parent[key] = copy = list(node)
+            stack.extend((copy, i) for i in reversed(range(len(copy))))
+        elif isinstance(node, dict) and node.get("isImage") is not True:
+            parent[key] = copy = dict(node)
+            stack.extend((copy, k) for k in reversed(list(copy)) if k != "base64")
+    return root[0]
 
 
 def _listed(names: List[str]) -> str:
@@ -624,19 +693,70 @@ STDOUT_EVENTS = ("tool-output", "tool-failure")  # these answer with JSON, the o
 def run_hook(
     event: str, stdin: Optional[Any] = None, stderr: Optional[Any] = None, stdout: Optional[Any] = None
 ) -> int:
+    """Run one hook. A hook must not fail open: Claude Code takes any exit code other than 2 from
+    the tool hook as "go ahead", and a tool-output hook that crashes leaves the output as it was.
+    So when something goes wrong the tool call is blocked and the output withheld, while the
+    prompt and session-end hooks step aside (blocking every prompt on a bug of ours helps nobody).
+    Messages never quote the exception: its text can hold anything, a key too."""
     stdin = stdin or sys.stdin
     stderr = stderr or sys.stderr
     stdout = stdout or sys.stdout
+    raw = stdin.read() or "{}"
     try:
-        payload = json.loads(stdin.read() or "{}")
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("not an object")
     except (ValueError, RecursionError):
-        return 0  # never get in the way because of our own parsing problem
-    if not isinstance(payload, dict):
-        return 0
-    code, message = handle(event, payload)
+        code, message = _unreadable(event, raw)
+    else:
+        try:
+            code, message = handle(event, payload)
+            if event in STDOUT_EVENTS and message:
+                json.loads(message)  # a reply too deep to encode raised already; this one must parse
+        except Exception as exc:
+            code, message = _failed(event, payload, type(exc).__name__)
     if message:
         print(message, file=stdout if event in STDOUT_EVENTS else stderr)
     return code
+
+
+_BUG = "This is a bug in spillage, please report it: https://github.com/maximilianfeix/spillage/issues"
+
+
+def _unreadable(event: str, raw: str) -> Tuple[int, str]:
+    """The hook's input isn't a JSON object we can read (nested too deep, say)."""
+    if event == "tool":
+        return 2, ("spillage blocked this: its input is nested too deeply to check, so it may read a secret. "
+                   "Try it in a simpler form.")
+    if event in STDOUT_EVENTS:
+        # no shape to hand back a redacted copy in, but the keys in it can still be named
+        from .scanner import load_ignore
+
+        try:
+            _, names = redact_output(raw, _output_rules({}), load_ignore())
+        except Exception:
+            names = []
+        if names:
+            return 0, json.dumps({"systemMessage": (
+                f"spillage: a tool printed {_listed(names)}, in output too deeply nested to redact, so it "
+                "reached the model: rotate it. The transcript is scrubbed when the session ends."
+            )})
+    return 0, ""
+
+
+def _failed(event: str, payload: dict, error: str) -> Tuple[int, str]:
+    if event == "tool":
+        return 2, (f"spillage blocked this: checking it failed ({error}), and a tool call that wasn't checked "
+                   f"may read a secret. Try another way, or ask the user. {_BUG}")
+    if event == "tool-output" and payload.get("tool_response") is not None:
+        notice = f"[spillage withheld this output: redacting it failed ({error}). {_BUG}]"
+        withheld = map_strings(payload["tool_response"], lambda text: notice if text else text)
+        return 0, json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": withheld,
+            "additionalContext": "spillage could not check this tool's output for secrets, so it was withheld.",
+        }})  # fmt: skip
+    return 0, ("" if event in STDOUT_EVENTS else f"spillage: the {event} hook failed ({error}). {_BUG}")
 
 
 # ---- installing ------------------------------------------------------------------------------
