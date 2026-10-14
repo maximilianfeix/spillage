@@ -123,6 +123,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="github: annotations plus a job summary, for Actions; sarif: for code scanning")
     repo.add_argument("--sarif", type=Path, metavar="FILE",
                       help="also write a SARIF report here, e.g. for github/codeql-action/upload-sarif")
+    repo.add_argument("--baseline", type=Path, metavar="FILE",
+                      help="fail only on secrets that are not in this baseline (see --write-baseline)")
+    repo.add_argument("--write-baseline", type=Path, metavar="FILE",
+                      help="record the secrets found now as accepted, for --baseline; no secret goes in the file")
     repo.add_argument("--no-color", action="store_true", help="plain output")
 
     doctor = sub.add_parser("doctor", help="where you stand: leaks, settings, guard hooks, this repo")
@@ -410,17 +414,32 @@ def cmd_watch(args: argparse.Namespace, max_ticks: Optional[int] = None) -> int:
 
 
 def cmd_repo(args: argparse.Namespace) -> int:
-    from . import repo_output
+    from . import baseline, repo_output
     from .repo import REPO_IGNORE, scan_repo
 
     root = args.path.resolve()
+    accepted = baseline.load(args.baseline) if args.baseline else None  # a bad file stops us before the scan
     result = scan_repo(root, files=args.files, all_files=args.all_files, ignore=load_ignore())
+    rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
+    # a transcript can be named after the key that is in it, and file names go into every format;
+    # the secrets a baseline accepts too, so this one knows every secret the scan saw
+    hide = result.scan.hide
+    if args.write_baseline:
+        baseline.write(args.write_baseline, hide(baseline.render(result.findings, rel)))
+        n = len(result.findings)
+        print(f"spillage: wrote a baseline of {n} secret{'s' if n != 1 else ''} to {args.write_baseline}",
+              file=sys.stderr)
+        return EXIT_CLEAN
+    note = ""
+    if accepted is not None:
+        result.scan.findings, n_accepted, n_stale = baseline.split(result.findings, accepted)
+        note = f"{n_accepted} accepted by the baseline"
+        if n_stale:
+            note += (f"; {n_stale} entr{'ies' if n_stale != 1 else 'y'} in the baseline "
+                     f"{'are' if n_stale != 1 else 'is'} no longer found (--write-baseline drops them)")
     findings = result.findings
     strict_fail = args.strict and bool(result.transcripts)
     failed = bool(findings) or strict_fail
-    rel = lambda f: os.path.relpath(f, root).replace(os.sep, "/")  # noqa: E731
-    # a transcript can be named after the key that is in it, and file names go into every format
-    hide = Hider([f.secret for f in findings])
     if args.sarif or args.format == "sarif":
         sarif = hide(repo_output.sarif(result, root, args.strict))
         if args.sarif:
@@ -432,6 +451,8 @@ def cmd_repo(args: argparse.Namespace) -> int:
     if args.format == "json":
         data = result.scan.to_dict()
         data["transcripts"] = result.transcripts
+        if accepted is not None:
+            data["baseline"] = {"file": str(args.baseline), "accepted": n_accepted, "stale": n_stale}
         for f in data["findings"]:
             for loc in f["locations"]:
                 loc["file"] = rel(loc["file"])
@@ -439,7 +460,7 @@ def cmd_repo(args: argparse.Namespace) -> int:
         return EXIT_FOUND if failed else EXIT_CLEAN
 
     if args.format in ("markdown", "github"):
-        md = hide(repo_output.markdown(result, rel))
+        md = hide(repo_output.markdown(result, rel) + (f"\n\n_{note}._" if note else ""))
         if args.format == "markdown":
             print(md)
         else:
@@ -465,6 +486,8 @@ def cmd_repo(args: argparse.Namespace) -> int:
         print(render(result.scan, "text", color=p.color, repo=True, repo_ignore=REPO_IGNORE))
     elif result.transcripts:
         print(f"\n  {p('✓', 'green')} No secrets in them.")
+    if note:
+        print(p(f"\n  {note}", "dim"))
     if strict_fail:
         print(p("\n  ✗ --strict: committed agent transcripts fail even without secrets. "
                 "Remove them from git and add them to .gitignore.", "red"))

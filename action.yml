@@ -18,6 +18,9 @@ inputs:
   sarif:
     description: Also write a SARIF report to this path, for github/codeql-action/upload-sarif
     default: ""
+  baseline:
+    description: A baseline file (written with `spillage repo --write-baseline FILE`); only secrets not in it fail the run
+    default: ""
 
 outputs:
   transcripts:
@@ -50,9 +53,11 @@ runs:
         SPILLAGE_STRICT: ${{ inputs.strict }}
         SPILLAGE_ALL: ${{ inputs.all-files }}
         SPILLAGE_SARIF: ${{ inputs.sarif }}
+        SPILLAGE_BASELINE: ${{ inputs.baseline }}
       run: |
         args=(repo "$SPILLAGE_PATH" --format github)
         [ "$SPILLAGE_STRICT" = "true" ] && args+=(--strict)
         [ "$SPILLAGE_ALL" = "true" ] && args+=(--all-files)
         [ -n "$SPILLAGE_SARIF" ] && args+=(--sarif "$SPILLAGE_SARIF")
+        [ -n "$SPILLAGE_BASELINE" ] && args+=(--baseline "$SPILLAGE_BASELINE")
         "$SPILLAGE_PY" -m spillage "${args[@]}"
