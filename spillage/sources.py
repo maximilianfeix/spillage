@@ -122,13 +122,11 @@ class Source:
 
     # -- reading -------------------------------------------------------------------------
     def load(self, path: Path) -> Optional[str]:
-        """The raw file text, or None for binary and oversized files."""
-        try:
-            if path.stat().st_size > MAX_FILE_BYTES:
-                return None
-        except OSError:
+        """The raw file text, or None for binary and oversized files. A file that can't be read
+        raises OSError: the scan lists it as not scanned instead of counting it as clean."""
+        if path.stat().st_size > MAX_FILE_BYTES:
             return None
-        return read_text_exact(path)
+        return read_text_exact(path, strict=True)
 
     def document(self, path: Path, text: str) -> Document:
         return Document(self, path, text)
@@ -170,19 +168,24 @@ def open_sqlite(path: Path):
     try:
         conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
-        return conn
     except sqlite3.Error:
-        return sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+    # one row with a broken byte in it must not end the read of the whole table
+    conn.text_factory = lambda raw: raw.decode("utf-8", errors="replace")
+    return conn
 
 
-def read_text_exact(path: Path) -> Optional[str]:
+def read_text_exact(path: Path, strict: bool = False) -> Optional[str]:
     """A file's text exactly as on disk: line endings untouched, and a stray invalid byte kept
-    as a surrogate so encoding it back gives the same bytes. None for binary files.
+    as a surrogate so encoding it back gives the same bytes. None for binary files, and for
+    files that can't be read unless `strict`, which raises the OSError instead.
 
     Scanning and scrubbing both read through here, so they always see the same text."""
     try:
         raw = path.read_bytes()
     except OSError:
+        if strict:
+            raise
         return None
     if b"\0" in raw[:8192]:
         return None
@@ -246,7 +249,7 @@ class Document:
         if self.kind == "jsonl":
             return self._locate_jsonl(start, lineno, secret)
         if self.kind == "json":
-            return self._locate_json(lineno, secret)
+            return self._locate_json(lineno, secret, start)
         state = {"session": "", "project": self.source.project_for(self.path)}
         return self._location(lineno, (), self.source.text_origin_at(self.path, self.text, start), state, "")
 
@@ -273,7 +276,7 @@ class Document:
             record, (), lineno, secret, state, skip=line.count(secret, 0, start - begin), in_text=line.count(secret)
         )
 
-    def _locate_json(self, lineno: int, secret: str) -> Optional[Location]:
+    def _locate_json(self, lineno: int, secret: str, start: int = 0) -> Optional[Location]:
         if self._parsed is _UNSET:
             try:
                 self._parsed = json.loads(self.text)
@@ -285,13 +288,19 @@ class Document:
             return self._location(lineno, (), Origin.OTHER, state, "")
         if isinstance(data, dict):
             self.source.update_state(data, state)
-            return self._in_record(data, (), lineno, secret, state)
+            # which of several places it is, the same way as on a JSONL line: the file can hold
+            # the key in an answer and again in a signed thinking block
+            return self._in_record(
+                data, (), lineno, secret, state, skip=self.text.count(secret, 0, start), in_text=self.text.count(secret)
+            )
         if isinstance(data, list):
             for i, record in enumerate(data):
                 if _contains(record, secret):
                     rstate = dict(state)
                     self.source.update_state(record, rstate)
                     return self._in_record(record, (i,), lineno, secret, rstate)
+        if isinstance(data, str) and secret in data:  # a file that is one JSON string
+            return self._location(lineno, (), Origin.OTHER, state, "")
         return None
 
     def _in_record(
@@ -306,7 +315,9 @@ class Document:
         appears, and `self.unsure` lists every place it could be, so scrub can stay away from a
         signed block that is among them."""
         stamp = record.get("timestamp", "") if isinstance(record, dict) else ""
-        places = [(jpath, value.count(secret)) for jpath, value in iter_strings(record) if secret in value]
+        places = [
+            (jpath, value.count(secret)) for jpath, value in iter_strings(record, max_string=None) if secret in value
+        ]
         exact = in_text is None or in_text == sum(count for _, count in places)
         self.unsure = () if exact else tuple(format_path(prefix + jpath) for jpath, _ in places)
         first: Optional[JsonPath] = places[0][0] if places else None
@@ -354,7 +365,7 @@ _UNSET = object()
 
 
 def _contains(node: Any, secret: str) -> bool:
-    return any(secret in value for _, value in iter_strings(node)) or _in_keys(node, secret)
+    return any(secret in value for _, value in iter_strings(node, max_string=None)) or _in_keys(node, secret)
 
 
 def _in_keys(node: Any, secret: str) -> bool:
@@ -421,6 +432,12 @@ _ROLE_MAP = {k: v for k, v in _ROLE_MAP.items() if v}
 
 # ---- SQLite-backed agents --------------------------------------------------------------------
 
+def unreadable_database(exc: Exception) -> OSError:
+    """A database that won't open is not an empty one. Only the kind of error is kept: SQLite's
+    messages can quote the schema."""
+    return OSError(f"can't read it as a SQLite database ({type(exc).__name__})")
+
+
 class SQLiteSource(Source):
     """Agents that keep sessions in SQLite. Each row becomes one JSON line (text columns only,
     JSON columns parsed), so the usual matching, context and dedup apply. Opened read-only and
@@ -433,14 +450,14 @@ class SQLiteSource(Source):
             return Source.load(self, path)
         try:
             conn = open_sqlite(path)
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as exc:
+            raise unreadable_database(exc) from None
         lines = []
         try:
             tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
             conn.close()
-            return None
+            raise unreadable_database(exc) from None
         try:
             for table in tables:
                 if table.startswith("sqlite_"):
@@ -808,8 +825,8 @@ class Cursor(Source):
         try:
             # immutable: never take a lock on a database Cursor may have open
             conn = open_sqlite(path)
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as exc:
+            raise unreadable_database(exc) from None
         lines = []
         try:
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -824,8 +841,8 @@ class Cursor(Source):
                 marks = ",".join("?" for _ in _CURSOR_ITEM_KEYS)
                 rows = conn.execute(f"SELECT key, value FROM ItemTable WHERE key IN ({marks})", _CURSOR_ITEM_KEYS)
                 lines += [_cursor_line(k, v) for k, v in rows]
-        except sqlite3.Error:
-            return None
+        except sqlite3.Error as exc:
+            raise unreadable_database(exc) from None
         finally:
             conn.close()
         return "\n".join(line for line in lines if line) or None
@@ -1182,7 +1199,7 @@ class _ConfigDocument(Document):
         self._start = start
         return super().locate(start, secret)
 
-    def _locate_json(self, lineno: int, secret: str) -> Optional[Location]:
+    def _locate_json(self, lineno: int, secret: str, start: int = 0) -> Optional[Location]:
         data = self._parsed
         if isinstance(data, (dict, list)):
             start = self._start

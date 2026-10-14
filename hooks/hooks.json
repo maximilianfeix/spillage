@@ -1,5 +1,5 @@
 {
-  "description": "spillage guard: block prompts with keys, block reading secret files, scrub the transcript at session end",
+  "description": "spillage guard: block prompts with keys, block reading secret files, redact keys a tool printed, scrub the transcript at session end",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -18,6 +18,28 @@
           {
             "type": "command",
             "command": "for p in python3 python py; do \"$p\" -c \"import sys; sys.exit(sys.version_info < (3, 9))\" 2>/dev/null && exec \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/run.py\" tool; done"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Grep|Bash|PowerShell|NotebookRead|WebFetch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for p in python3 python py; do \"$p\" -c \"import sys; sys.exit(sys.version_info < (3, 9))\" 2>/dev/null && exec \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/run.py\" tool-output; done"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Read|Grep|Bash|PowerShell|NotebookRead|WebFetch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for p in python3 python py; do \"$p\" -c \"import sys; sys.exit(sys.version_info < (3, 9))\" 2>/dev/null && exec \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/run.py\" tool-failure; done"
           }
         ]
       }

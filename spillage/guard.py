@@ -5,6 +5,9 @@ Three hooks, all plain commands that read the hook event as JSON on stdin:
 - UserPromptSubmit: a prompt containing a secret is blocked before it is sent.
 - PreToolUse: reading `.env` files, private keys and credential files is blocked, through the
   Read / Grep tools as well as through Bash (`cat .env`, `printenv`, `gh auth token`, ...).
+- PostToolUse (Claude Code): a key in what a tool printed is replaced by a marker before the
+  model sees it. PostToolUseFailure can't replace anything, so a key in the output of a failed
+  command is reported instead.
 - SessionEnd: the session's transcript is scrubbed. Claude Code logs a prompt even when the
   hook above blocked it, and tool output may still have caught something.
 
@@ -17,6 +20,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -24,9 +28,10 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .scanner import scan_text
+from .models import Severity, fingerprint
+from .scanner import find_in_text, scan_text
 
 MARK = "spillage hook"
 # Our hook in any form it gets installed as: `spillage hook …`, `/path/to/spillage hook …`,
@@ -34,6 +39,8 @@ MARK = "spillage hook"
 _HOOK_COMMAND = re.compile(r"""(?:^|[\s"'\\/])spillage(?:\.exe)?["']?\s+hook\b""", re.IGNORECASE)
 ALLOW_WORD = "spillage:allow"
 TOOL_MATCHER = "Read|Grep|Bash|PowerShell|NotebookRead|mcp__.*read.*"
+# the tools whose result is text from outside the conversation: a file, a command, a page, a server
+OUTPUT_MATCHER = "Read|Grep|Bash|PowerShell|NotebookRead|WebFetch|mcp__.*"
 
 # Files that are nothing but secrets. Templates like .env.example are fine to read.
 SECRET_FILES = (
@@ -52,24 +59,69 @@ SAFE_FILES = ("*.example", "*.sample", "*.template", "*.dist", "*.defaults", "*.
 _READERS = {
     "cat", "less", "more", "head", "tail", "bat", "batcat", "strings", "xxd", "od", "hexdump", "grep",
     "egrep", "fgrep", "rg", "ag", "awk", "sed", "sort", "nl", "tac", "cut", "base64", "type", "jq", "yq",
-    "source", ".", "python", "python3", "node", "ruby", "perl", "openssl",
+    "source", ".", "python", "python3", "node", "ruby", "perl", "openssl", "diff", "cmp", "paste", "rev",
+    "fold", "column", "uniq", "expand", "iconv", "zcat", "zless", "view", "dd", "php", "bun", "deno",
     # PowerShell and cmd
     "get-content", "gc", "select-string", "sls", "import-csv", "findstr",
 }
+# Commands that print the environment or a stored credential. They are looked for in the command
+# with its plain quoted text taken out: `git commit -m "block gh auth token"` only talks about one.
 _ENV_DUMPS = [
-    re.compile(r"(?:^|[;&|]\s*)(?:printenv|env|export\s+-p|set|declare\s+-x)\s*(?:$|[;&|>])"),
+    re.compile(r"(?:^|[;&|\n]\s*)(?:printenv|env|export(?:\s+-p)?|set|declare\s+-x)\s*(?:$|[;&|>\n])"),
+    # `declare -p` with no name prints every variable and its value; `declare -p PATH` just one
+    re.compile(r"(?:^|[;&|\n]\s*)(?:declare|typeset)\s+-[A-Za-z]*p[A-Za-z]*\s*(?:$|[;&|>\n])"),
     re.compile(r"\bgh\s+auth\s+token\b"),
-    re.compile(r"\bgh\s+auth\s+status\b[^;&|]*--show-token"),
-    re.compile(r"\bsecurity\s+find-(?:generic|internet)-password\b[^;&|]*\s-w\b"),
+    re.compile(r"\bgh\s+auth\s+status\b[^;&|\n]*--show-token"),
+    re.compile(r"\bsecurity\s+find-(?:generic|internet)-password\b[^;&|\n]*\s-w\b"),
     re.compile(r"\baws\s+configure\s+(?:get|export-credentials)\b"),
-    re.compile(r"\bgcloud\s+auth\s+print-access-token\b"),
-    re.compile(r"\bop\s+(?:read|item\s+get)\b[^;&|]*(?:--reveal|op://)"),
+    re.compile(r"\baws\s+secretsmanager\s+get-secret-value\b"),
+    re.compile(r"\baws\s+ssm\s+get-parameters?\b[^;&|\n]*--with-decryption"),
+    re.compile(r"\baws\s+sts\s+(?:get-session-token|assume-role)\b"),
+    re.compile(r"\bgcloud\s+auth\s+print-(?:access|identity)-token\b"),
+    re.compile(r"\bgcloud\s+secrets\s+versions\s+access\b"),
+    re.compile(r"\baz\s+account\s+get-access-token\b"),
+    re.compile(r"\baz\s+keyvault\s+secret\s+show\b"),
+    re.compile(r"\bkubectl\s+get\s+secrets?\b[^;&|\n]*\s-o\s*(?:yaml|json|jsonpath|go-template)"),
+    re.compile(r"\bkubectl\s+config\s+view\b[^;&|\n]*--raw\b"),
+    re.compile(r"\bvault\s+(?:kv\s+get|read)\b"),
+    re.compile(r"\bheroku\s+config(?::get)?(?:\s|$)"),
+    re.compile(r"\bdoppler\s+secrets(?:\s+(?:get|download)\b|\s*(?:$|[;&|>\n]))"),
+    re.compile(r"\bdocker[\s-]compose\s+config\b(?![^;&|\n]*(?:\s-q\b|--quiet|--services|--volumes|--images|--profiles))"),
+    re.compile(r"\bterraform\s+output\b[^;&|\n]*\s-(?:json|raw)\b"),
+    re.compile(r"\bsupabase\s+status\b"),
+    re.compile(r"\bnpm\s+config\s+get\s+\S*_authToken"),
     re.compile(r"\bcat\s+/proc/(?:self|\d+)/environ\b"),
+]
+# The same, where the telling part is quoted or inside a script on the command line
+_CODE_DUMPS = [
+    re.compile(r"\bop\s+(?:read|item\s+get)\b[^;&|\n]*(?:--reveal|op://)"),
     # the whole environment from PowerShell, Python or Node
     re.compile(r"\[(?:System\.)?Environment\]::GetEnvironmentVariables\b", re.IGNORECASE),
     re.compile(r"\bprint\(\s*(?:dict\(\s*)?os\.environ\s*\)"),
     re.compile(r"\bconsole\.log\(\s*process\.env\s*\)"),
 ]
+# quoted text nothing gets expanded in: '…' and a "…" without a $ or a backtick
+# one variable looked up in Python, Node, Ruby or Perl, and something that prints
+_ENV_LOOKUP = re.compile(
+    r"""os\.environ(?:\.get\(|\[)\s*["'](\w+)|os\.getenv\(\s*["'](\w+)|process\.env\.(\w+)"""
+    r"""|process\.env\[\s*["'](\w+)|\bENV\[\s*["'](\w+)|\$ENV\{\s*["']?(\w+)"""
+)
+_PRINTS = re.compile(r"\bprint|console\.(?:log|info|error)|\bputs\b|\bsay\b|\.write\(")
+# something in a script on the command line that opens a file
+_OPENS_A_FILE = re.compile(r"open|read|path|file|slurp|load|cat|fs\.", re.IGNORECASE)
+# git subcommands that print what a file holds; `HEAD:.env` names the file after the colon
+_GIT_PRINTS = {"show", "diff", "grep", "blame", "annotate", "cat-file"}
+# what separates commands, swapped for private-use characters while it sits inside plain quotes
+_SHIELD = {ord(c): 0xE000 + i for i, c in enumerate(";&|\n`$")}
+_UNSHIELD = {code: char for char, code in _SHIELD.items()}
+_HEREDOC = re.compile(r"""<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1""")
+# options of the search tools that take a value, so the word after them isn't what to look for
+_SEARCH_VALUE_OPTIONS = {
+    "-g", "--glob", "--iglob", "--include", "--exclude", "--exclude-dir", "--include-dir", "-A", "-B", "-C",
+    "-m", "--max-count", "-t", "--type", "-T", "--type-not", "-d", "--max-depth", "-j", "--threads",
+}
+# names a glob is tried against: `cat .env*` and `cat .en?` read the same file as `cat .env`
+_DOTFILES = (".env", ".env.local", ".env.production", ".envrc", ".npmrc", ".netrc", ".pypirc", ".git-credentials")
 # PowerShell's Env: drive: `Get-ChildItem Env:` lists everything, `Get-Item Env:GITHUB_TOKEN` one value
 _ENV_DRIVE = re.compile(
     r"\b(?:get-childitem|gci|dir|ls|get-item|gi|get-content|gc)\s+(?:-(?:literal)?path\s+)?[\"']?env:[\\/]?([\w*?]*)",
@@ -87,11 +139,12 @@ _SINGLE_QUOTED = re.compile(r"'[^']*'")
 _NOT_THE_VALUE = {"COUNT", "LENGTH", "LEN", "NAME", "FILE", "PATH", "DIR", "ID", "TTL", "EXPIRY", "EXPIRES", "TYPE",
                   "HEADER", "PREFIX", "ENABLED", "SET"}
 _PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ag", "findstr"}  # their first argument is what to look for
-_INTERPRETERS = {"python", "python3", "node", "ruby", "perl"}
+_INTERPRETERS = {"python", "python3", "node", "ruby", "perl", "php", "bun", "deno"}
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
 # commands that run the command after them; the ones in _WITH_VALUE take one argument of their own first
 _WRAPPERS = {"sudo", "doas", "command", "builtin", "exec", "time", "nice", "ionice", "xargs", "env", "nohup",
-             "timeout", "stdbuf", "setsid", "watch", "caffeinate", "unbuffer", "chronic"}
+             "timeout", "stdbuf", "setsid", "watch", "caffeinate", "unbuffer", "chronic", "eval", "iex",
+             "invoke-expression", "busybox", "toybox"}
 _WITH_VALUE = {"timeout": 1}  # `timeout 5 cat .env`
 # the options of each wrapper that are followed by a value: `sudo -u root`, `nice -n 5`. Anything else
 # with a dash stands alone (`sudo -n cat .env`), so the word after it is the command.
@@ -109,14 +162,42 @@ _VALUE_OPTIONS = {
 }
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELLS = {"bash", "sh", "zsh", "dash", "fish", "pwsh", "powershell", "cmd"}
+# the same program under its Windows name, or with its version: cat.exe, python3.12, py -3
+_EXE_SUFFIX = re.compile(r"\.(?:exe|com|cmd|bat)$")
+_VERSIONED = re.compile(r"(python3|python|node|ruby|perl|php)[\d.]*")
+# what a process can read about itself or another: /proc/self/environ is the whole environment
+_PROC_ENVIRON = re.compile(r"(?:^|/)proc/(?:self|thread-self|\d+)(?:/task/\d+)?/environ$")
+
+
+class _TooDeep(Exception):
+    """Commands nested deeper than we follow. Not followed means not checked, so it's blocked."""
+
+
+def _verb(word: str) -> str:
+    """The program a word runs, by the name the lists here use: `/usr/bin/python3.12` -> python3,
+    `C:/Windows/System32/more.com` -> more, `py` (the Windows launcher) -> python."""
+    name = _EXE_SUFFIX.sub("", os.path.basename(word).lower())
+    if name == "py":
+        return "python"
+    versioned = _VERSIONED.fullmatch(name)
+    return versioned.group(1) if versioned else name
 
 
 def is_secret_file(path: str) -> bool:
     # lower case: macOS and Windows open `.ENV` as `.env`
     p = path.replace("\\", "/").rstrip("/").lower()
+    # Windows opens `.env::$DATA`, `.env.` and `.env ` as `.env` too
+    p = re.sub(r"::\$data$", "", p).rstrip(". ") or p
+    p = posixpath.normpath(p) if p else p  # `~/.codex/./auth.json`, `config/../.env`
     name = p.rsplit("/", 1)[-1]
+    if _PROC_ENVIRON.search(p):
+        return True
     if any(fnmatch.fnmatchcase(name, pat) for pat in SAFE_FILES):
         return False
+    if name.startswith(".") and any(c in name for c in "*?[") and name.strip("*?.") and any(
+        fnmatch.fnmatchcase(dotfile, name) for dotfile in _DOTFILES
+    ):
+        return True  # a glob that picks up a file of secrets
     for pat in SECRET_FILES:
         if "/" in pat:
             if p == pat or p.endswith("/" + pat):
@@ -151,12 +232,15 @@ def _unwrap(words: List[str]) -> List[str]:
     """The command itself, without what stands in front of it: `FOO=1 sudo -u root timeout 5 cat .env`
     runs `cat .env`. `["printenv"]` for an `env` that is left with nothing to run, since that
     prints every variable."""
-    for _ in range(8):  # wrappers can be stacked, but not forever
+    # Every round takes off at least the wrapper's own name, so this ends; the limit is for a quoted
+    # word that unpacks into more wrappers. Stopping early would let `sudo sudo … cat .env` through,
+    # so running out of rounds is an error the caller blocks on.
+    for _ in range(256):
         while words and _ASSIGNMENT.match(words[0]):
             words = words[1:]
-        if not words or os.path.basename(words[0]).lower() not in _WRAPPERS:
-            break
-        wrapper = os.path.basename(words[0]).lower()
+        if not words or _verb(words[0]) not in _WRAPPERS:
+            return words
+        wrapper = _verb(words[0])
         with_value = _VALUE_OPTIONS.get(wrapper, set())
         words = words[1:]
         while words and words[0].startswith("-"):
@@ -172,7 +256,22 @@ def _unwrap(words: List[str]) -> List[str]:
                 return ["printenv"]
         if len(words) == 1 and " " in words[0]:
             words = _words(words[0])  # watch 'cat .env': the command is one quoted word
-    return words
+    raise _TooDeep()
+
+
+def _xargs_file(words: List[str]) -> Optional[str]:
+    """The file `xargs -a .env …` reads its arguments from (and passes them on, to be printed)."""
+    for i, word in enumerate(words):
+        if _verb(word) != "xargs":
+            continue
+        for option, value in zip(words[i + 1 :], words[i + 2 :] + [""]):
+            if option in ("-a", "--arg-file") and value:
+                return value
+            if option.startswith("--arg-file="):
+                return option.split("=", 1)[1]
+            if option.startswith("-a") and len(option) > 2:
+                return option[2:]
+    return None
 
 
 def _inner_script(verb: str, words: List[str]) -> Optional[str]:
@@ -186,14 +285,114 @@ def _inner_script(verb: str, words: List[str]) -> Optional[str]:
     return None
 
 
+def _without_heredocs(command: str) -> Tuple[str, List[str]]:
+    """The command without the text of its heredocs: `cat > notes.md <<EOF … EOF` writes that text
+    down, it doesn't run it. A heredoc that is fed to a shell stays, those lines are commands.
+    The ones fed to Python, Node, Ruby or Perl come back as the second value: they are scripts."""
+    if "<<" not in command:
+        return command, []
+    scripts: List[str] = []
+    lines = command.split("\n")
+    kept, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        opener = _HEREDOC.search(line)
+        if not opener:
+            continue
+        try:
+            words = _unwrap(_words(re.split(r"[;&|]+", line[: opener.start()])[-1]))
+        except _TooDeep:
+            words = []
+        verb = _verb(words[0]) if words else ""
+        if verb.rsplit(".", 1)[0] in _SHELLS:
+            continue
+        start = i
+        while i < len(lines) and lines[i].strip() != opener.group(2):
+            i += 1
+        if verb in _INTERPRETERS:
+            scripts.append("\n".join(lines[start:i]))
+        i += 1  # the line that closes it
+    return "\n".join(kept), scripts
+
+
+def _quoted_text(command: str) -> Tuple[str, str]:
+    """The command twice: once with its plain quoted text taken out, and once with what separates
+    commands (`;`, `|`, a line break) made harmless inside that text.
+
+    Plain is '…' and a "…" that has no `$` and no backtick, so nothing in it gets run. The quotes
+    are followed one by one: taking every pair of quotes for a string would pair the end of one
+    with the start of the next and hide the command between them."""
+    plain, shielded = [], []
+    i, n = 0, len(command)
+    while i < n:
+        char = command[i]
+        if char == "\\" and i + 1 < n:
+            end, inert = i + 2, False
+        elif char == "'":
+            close = command.find("'", i + 1)
+            end, inert = (close + 1, True) if close != -1 else (n, False)
+        elif char == '"':
+            end = i + 1
+            while end < n and command[end] != '"':
+                end += 2 if command[end] == "\\" else 1
+            end = min(end + 1, n)
+            inert = end <= n and command[end - 1 : end] == '"' and not any(c in command[i:end] for c in "$`")
+        else:
+            end, inert = i + 1, False
+        piece = command[i:end]
+        plain.append('""' if inert else piece)
+        shielded.append(piece.translate(_SHIELD) if inert else piece)
+        i = end
+    return "".join(plain), "".join(shielded)
+
+
+def _git_target(words: List[str]) -> Optional[str]:
+    """The secret file a `git show HEAD:.env`, `git diff .env` or `git grep KEY -- .env` prints."""
+    args = words[1:]
+    while args and args[0].startswith("-"):
+        args = args[2:] if args[0] in ("-C", "-c", "--git-dir", "--work-tree") else args[1:]
+    if not args:
+        return None
+    # `git log -p -- .env` prints every version the file ever had; `git log -- .env` only commits
+    patch = args[0] == "log" and any(a in ("-p", "-u", "--patch") or a.startswith("--patch") for a in args)
+    if args[0] not in _GIT_PRINTS and not patch:
+        return None
+    for word in args[1:]:
+        if word.startswith("-"):
+            continue
+        target = word.rsplit(":", 1)[-1]  # `HEAD:.env` and `:.env`
+        if target and is_secret_file(target):
+            return target
+    return None
+
+
 def risky_command(command: str, powershell: bool = False) -> Optional[str]:
     """Why a shell command would leak secrets into the conversation, or None.
 
     In PowerShell a backslash is part of a path and not an escape, so `powershell=True` keeps
     `C:\\Users\\me\\.ssh\\id_rsa` in one piece."""
+    try:
+        return _risky_command(command, powershell)
+    except (_TooDeep, RecursionError):
+        return "it nests commands deeper than spillage follows, so it can't be checked"
+
+
+def _risky_command(command: str, powershell: bool) -> Optional[str]:
     if powershell:
         command = command.replace("\\", "/")
+    command, scripts = _without_heredocs(command)
+    for script in scripts:
+        # python - <<EOF … open('.env') … EOF: what the script has in quotes can be a file it opens
+        for piece in _QUOTED.findall(script) if _OPENS_A_FILE.search(script) else ():
+            if " " not in piece and is_secret_file(piece):
+                return f"it reads {piece}, which holds secrets"
+    plain, shielded = _quoted_text(command)
     for pattern in _ENV_DUMPS:
+        if pattern.search(plain):
+            return "it prints environment variables or stored credentials"
+    for pattern in _CODE_DUMPS:
         if pattern.search(command):
             return "it prints environment variables or stored credentials"
     for match in _ENV_DRIVE.finditer(command):
@@ -203,23 +402,45 @@ def risky_command(command: str, powershell: bool = False) -> Optional[str]:
     for match in _GET_VARIABLE.finditer(command):
         if _names_a_secret(match.group(1)):
             return f"it prints {match.group(1)}, which looks like a secret"
+    if _PRINTS.search(command):
+        for match in _ENV_LOOKUP.finditer(command):
+            name = next(group for group in match.groups() if group)
+            if _names_a_secret(name):
+                return f"it prints {name}, which looks like a secret"
     for match in _READ_CALL.finditer(command):
         if is_secret_file(match.group(1)):
             return f"it reads {match.group(1)}, which holds secrets"
-    for segment in re.split(r"[;&|]+|\$\(|`", command):
+    # a `;` inside plain quotes is text: git commit -m 'stop env; printenv'
+    for segment in re.split(r"[;&|\n]+|\$\(|`", shielded):
+        segment = segment.translate(_UNSHIELD)
         # `cat<.env` reads the same file as `cat < .env`, and `(cat .env)` the same as `cat .env`
         words = _words(re.sub(r"(?<![<\d])<(?!<)", " < ", segment).strip().lstrip("({ ").rstrip(")} "))
         if not words:
             continue
+        for word, after in zip(words, words[1:]):
+            if word == "<" and is_secret_file(after):  # whatever the command is, this is what it reads
+                return f"it reads {after}, which holds secrets"
+        xargs_file = _xargs_file(words)
+        if xargs_file and is_secret_file(xargs_file):
+            return f"it reads {xargs_file}, which holds secrets"
+        first = _verb(words[0])
+        if first in _WRAPPERS or first == "ssh":
+            # watch 'ls; cat .env', eval "a && cat .env", ssh host 'cat .env': the quoted word is a
+            # script of its own
+            for word in words[1:]:
+                is_script = re.search(r"[;&|\n]", word) or (first == "ssh" and " " in word)
+                reason = _risky_command(word, powershell) if is_script and word != command else None
+                if reason:
+                    return reason
         words = _unwrap(words)
         if not words:
             continue
-        verb = os.path.basename(words[0]).lower()
+        verb = _verb(words[0])
         if verb == "printenv" and len(words) == 1:
             return "it prints environment variables or stored credentials"
         script = _inner_script(verb, words)
         if script and script != command:
-            reason = risky_command(script, powershell or verb.startswith(("pwsh", "powershell")))
+            reason = _risky_command(script, powershell or verb.startswith(("pwsh", "powershell")))
             if reason:
                 return reason
             continue
@@ -227,22 +448,38 @@ def risky_command(command: str, powershell: bool = False) -> Optional[str]:
             name = _printed_variable(verb, segment, words)
             if name:
                 return f"it prints {name}, which looks like a secret"
+        if verb == "git":
+            target = _git_target(words)
+            if target:
+                return f"it reads {target}, which holds secrets"
+        if verb == "find" and any(w in ("-exec", "-execdir") for w in words):
+            # find . -name .env -exec cat {} +
+            for option, value in zip(words, words[1:]):
+                if option in ("-name", "-iname", "-path", "-wholename") and is_secret_file(value):
+                    return f"it reads {value}, which holds secrets"
         if verb not in _READERS:
             continue
         args = words[1:]
         if verb in _PATTERN_FIRST and not any(a in ("-e", "-f", "--regexp", "--file") for a in args):
             # `grep -rn credentials src/` looks for a word, it doesn't read a file of that name
             option = "/" if verb == "findstr" else "-"
-            pattern = next((a for a in args if not a.startswith(option)), None)
+            at, pattern = 0, None
+            while at < len(args) and pattern is None:
+                if args[at] in _SEARCH_VALUE_OPTIONS:
+                    at += 2  # `rg --glob .env password`: .env is where to look, not what to look for
+                elif args[at].startswith(option):
+                    at += 1
+                else:
+                    pattern = at
             if pattern is not None:
-                args = args[: args.index(pattern)] + args[args.index(pattern) + 1 :]
+                args = args[:pattern] + args[pattern + 1 :]
         for word in args:
-            target = word.split("=", 1)[-1] if word.startswith("-") else word
+            target = word.split("=", 1)[-1] if word.startswith(("-", "if=")) else word
             target = target.lstrip("<").rstrip(")`'\"")
             is_code = verb in _INTERPRETERS and bool(re.search(r"[\s(){};=]", word))
             if target and not target.startswith("-") and not is_code and is_secret_file(target):
                 return f"it reads {target}, which holds secrets"
-            if is_code:
+            if is_code and _OPENS_A_FILE.search(word):
                 # a script on the command line: python -c "print(open('.env').read())". Only what it
                 # has in quotes can be a file name; `config.key` is an attribute.
                 for piece in _QUOTED.findall(word):
@@ -258,11 +495,16 @@ SHELL_TOOLS = {"Bash", "PowerShell", "run_shell_command", "shell", "local_shell"
 
 
 def _strings(value: Any) -> List[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [v for v in value if isinstance(v, str)]
-    return []
+    """The strings in a tool argument: one path, a list of them, or lists in lists."""
+    out: List[str] = []
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, list):
+            stack.extend(reversed(item))
+    return out
 
 
 def _is_mcp_read(tool: str) -> bool:
@@ -304,8 +546,114 @@ def check_tool(tool: str, tool_input: Any) -> Optional[str]:
     return None
 
 
+def redact_output(value: Any, rules: Sequence[Any], ignore: Iterable[str] = ()) -> Tuple[Any, List[str]]:
+    """A tool's result with every secret in it replaced by a marker, and what was replaced.
+
+    The result keeps its shape (Claude Code drops a replacement that doesn't match the tool's
+    own), so only the strings inside change. Low severity matches stay: a Stripe test key or a
+    Supabase `anon` key is often what the agent is supposed to work with."""
+    from .scrub import marker
+
+    skip = set(ignore)
+    names: List[str] = []
+
+    def clean(text: str) -> str:
+        pieces, last = [], 0
+        for rule, match in find_in_text(text, rules):
+            fp = fingerprint(match.secret)
+            if fp in skip or rule.severity_for(match.secret) < Severity.MEDIUM:
+                continue
+            pieces += [text[last : match.start], marker(rule.id, fp)]
+            last = match.end
+            names.append(rule.name_for(match.secret))
+        return "".join(pieces) + text[last:] if pieces else text
+
+    return map_strings(value, clean), names
+
+
+def map_strings(value: Any, fn) -> Any:
+    """A copy of a JSON value with `fn` applied to every string in it, the shape kept.
+
+    A loop and not recursion: a tool's result can be nested deeper than Python's stack, and a
+    crash here would hand the output to the model unredacted. A screenshot (`isImage`) and
+    `base64` fields stay as they are: what looks like a key in base64 is noise."""
+    root = [value]
+    stack: List[Tuple[Any, Any]] = [(root, 0)]
+    while stack:
+        parent, key = stack.pop()
+        node = parent[key]
+        if isinstance(node, str):
+            parent[key] = fn(node)
+        elif isinstance(node, list):
+            parent[key] = copy = list(node)
+            stack.extend((copy, i) for i in reversed(range(len(copy))))
+        elif isinstance(node, dict) and node.get("isImage") is not True:
+            parent[key] = copy = dict(node)
+            stack.extend((copy, k) for k in reversed(list(copy)) if k != "base64")
+    return root[0]
+
+
+def _listed(names: List[str]) -> str:
+    """`2 secrets (GitHub token, Stripe live key)`"""
+    kinds = list(dict.fromkeys(names))
+    shown = ", ".join(kinds[:3]) + (", …" if len(kinds) > 3 else "")
+    return f"{len(names)} secret{'s' if len(names) != 1 else ''} ({shown})"
+
+
+def _output_rules(payload: dict) -> list:
+    """The rules plus the values from the project's .env files, like the scrub at session end."""
+    from .envfiles import rules_with_env
+    from .rules import get_rules
+
+    cwd = payload.get("cwd")
+    return rules_with_env(get_rules(), [Path(cwd)] if isinstance(cwd, str) and Path(cwd).is_dir() else [])
+
+
 def handle(event: str, payload: dict) -> Tuple[int, str]:
-    """(exit code, message) for one hook call. Pure, so it's easy to test."""
+    """(exit code, message) for one hook call. Pure, so it's easy to test.
+
+    The message goes to stderr, except for the two events in STDOUT_EVENTS: those answer
+    with JSON on stdout."""
+    if event == "tool-output":
+        from .scanner import load_ignore
+
+        response = payload.get("tool_response")
+        if response is None:
+            return 0, ""
+        cleaned, names = redact_output(response, _output_rules(payload), load_ignore())
+        if not names:
+            return 0, ""
+        return 0, json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": cleaned,
+            "additionalContext": (
+                f"spillage replaced {_listed(names)} in this output with [REDACTED:…] markers, so the values "
+                "stay out of the conversation and the session log. Nothing on disk changed. Refer to them "
+                "by the name of their variable instead of trying to read the values another way."
+            ),
+        }})  # fmt: skip
+    if event == "tool-failure":
+        from .scanner import load_ignore
+
+        error = payload.get("error")
+        if not isinstance(error, str):
+            return 0, ""
+        _, names = redact_output(error, _output_rules(payload), load_ignore())
+        if not names:
+            return 0, ""
+        return 0, json.dumps({
+            "systemMessage": (
+                f"spillage: a failed command printed {_listed(names)}. The output of a failed command can't "
+                "be changed, so it reached the model: rotate it. The transcript is scrubbed when the session ends."
+            ),
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUseFailure",
+                "additionalContext": (
+                    f"The error output above contains {_listed(names)}. Don't repeat the value anywhere. "
+                    "Tell the user that it was exposed and should be rotated."
+                ),
+            },
+        })  # fmt: skip
     if event == "prompt":
         prompt = payload.get("prompt") or ""
         if not isinstance(prompt, str) or ALLOW_WORD in prompt:
@@ -344,19 +692,76 @@ def handle(event: str, payload: dict) -> Tuple[int, str]:
     raise ValueError(f"unknown hook event {event!r}")
 
 
-def run_hook(event: str, stdin: Optional[Any] = None, stderr: Optional[Any] = None) -> int:
+STDOUT_EVENTS = ("tool-output", "tool-failure")  # these answer with JSON, the others with exit code 2
+
+
+def run_hook(
+    event: str, stdin: Optional[Any] = None, stderr: Optional[Any] = None, stdout: Optional[Any] = None
+) -> int:
+    """Run one hook. A hook must not fail open: Claude Code takes any exit code other than 2 from
+    the tool hook as "go ahead", and a tool-output hook that crashes leaves the output as it was.
+    So when something goes wrong the tool call is blocked and the output withheld, while the
+    prompt and session-end hooks step aside (blocking every prompt on a bug of ours helps nobody).
+    Messages never quote the exception: its text can hold anything, a key too."""
     stdin = stdin or sys.stdin
     stderr = stderr or sys.stderr
+    stdout = stdout or sys.stdout
+    raw = stdin.read() or "{}"
     try:
-        payload = json.loads(stdin.read() or "{}")
-    except ValueError:
-        return 0  # never get in the way because of our own parsing problem
-    if not isinstance(payload, dict):
-        return 0
-    code, message = handle(event, payload)
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("not an object")
+    except (ValueError, RecursionError):
+        code, message = _unreadable(event, raw)
+    else:
+        try:
+            code, message = handle(event, payload)
+            if event in STDOUT_EVENTS and message:
+                json.loads(message)  # a reply too deep to encode raised already; this one must parse
+        except Exception as exc:
+            code, message = _failed(event, payload, type(exc).__name__)
     if message:
-        print(message, file=stderr)
+        print(message, file=stdout if event in STDOUT_EVENTS else stderr)
     return code
+
+
+_BUG = "This is a bug in spillage, please report it: https://github.com/maximilianfeix/spillage/issues"
+
+
+def _unreadable(event: str, raw: str) -> Tuple[int, str]:
+    """The hook's input isn't a JSON object we can read (nested too deep, say)."""
+    if event == "tool":
+        return 2, ("spillage blocked this: its input is nested too deeply to check, so it may read a secret. "
+                   "Try it in a simpler form.")
+    if event in STDOUT_EVENTS:
+        # no shape to hand back a redacted copy in, but the keys in it can still be named
+        from .scanner import load_ignore
+
+        try:
+            _, names = redact_output(raw, _output_rules({}), load_ignore())
+        except Exception:
+            names = []
+        if names:
+            return 0, json.dumps({"systemMessage": (
+                f"spillage: a tool printed {_listed(names)}, in output too deeply nested to redact, so it "
+                "reached the model: rotate it. The transcript is scrubbed when the session ends."
+            )})
+    return 0, ""
+
+
+def _failed(event: str, payload: dict, error: str) -> Tuple[int, str]:
+    if event == "tool":
+        return 2, (f"spillage blocked this: checking it failed ({error}), and a tool call that wasn't checked "
+                   f"may read a secret. Try another way, or ask the user. {_BUG}")
+    if event == "tool-output" and payload.get("tool_response") is not None:
+        notice = f"[spillage withheld this output: redacting it failed ({error}). {_BUG}]"
+        withheld = map_strings(payload["tool_response"], lambda text: notice if text else text)
+        return 0, json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": withheld,
+            "additionalContext": "spillage could not check this tool's output for secrets, so it was withheld.",
+        }})  # fmt: skip
+    return 0, ("" if event in STDOUT_EVENTS else f"spillage: the {event} hook failed ({error}). {_BUG}")
 
 
 # ---- installing ------------------------------------------------------------------------------
@@ -376,9 +781,18 @@ class AgentHooks:
     end_event: str
     tool_matcher: str
     comments: bool = False  # the config file may contain // comments (JSONC)
+    # Only where the agent lets a hook replace what a tool printed: after a tool ran, and after it failed
+    output_event: Optional[str] = None
+    failure_event: Optional[str] = None
 
-    def events(self) -> Tuple[str, str, str]:
-        return (self.prompt_event, self.tool_event, self.end_event)
+    def hooks(self) -> Dict[str, str]:
+        """agent event -> the `spillage hook <name>` it runs."""
+        named = {self.prompt_event: "prompt", self.tool_event: "tool", self.output_event: "tool-output",
+                 self.failure_event: "tool-failure", self.end_event: "session-end"}
+        return {event: name for event, name in named.items() if event}
+
+    def events(self) -> Tuple[str, ...]:
+        return tuple(self.hooks())
 
     @property
     def label(self) -> str:
@@ -399,7 +813,8 @@ AGENTS = {
     "claude": AgentHooks(
         name="claude", folder=".claude", user_file="settings.json", project_file="settings.json",
         local_file="settings.local.json", prompt_event="UserPromptSubmit", tool_event="PreToolUse",
-        end_event="SessionEnd", tool_matcher=TOOL_MATCHER,
+        end_event="SessionEnd", tool_matcher=TOOL_MATCHER, output_event="PostToolUse",
+        failure_event="PostToolUseFailure",
     ),
     "codex": AgentHooks(
         name="codex", folder=".codex", user_file="hooks.json", project_file="hooks.json", local_file=None,
@@ -539,11 +954,13 @@ def _is_ours(group: Any) -> bool:
 
 def _desired(agent: str = "claude") -> dict:
     t = get_agent(agent)
-    return {
-        t.prompt_event: {"hooks": [{"type": "command", "command": hook_command("prompt")}]},
-        t.tool_event: {"matcher": t.tool_matcher, "hooks": [{"type": "command", "command": hook_command("tool")}]},
-        t.end_event: {"hooks": [{"type": "command", "command": hook_command("session-end")}]},
-    }
+    matchers = {t.tool_event: t.tool_matcher, t.output_event: OUTPUT_MATCHER, t.failure_event: OUTPUT_MATCHER}
+    desired = {}
+    for event, name in t.hooks().items():
+        group: dict = {"matcher": matchers[event]} if event in matchers else {}
+        group["hooks"] = [{"type": "command", "command": hook_command(name)}]
+        desired[event] = group
+    return desired
 
 
 def install(path: Path, agent: str = "claude") -> bool:
@@ -603,6 +1020,5 @@ def status(path: Path, agent: str = "claude") -> dict:
         return dict.fromkeys(events, False)
     hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
     return {
-        event: any(_is_ours(g) for g in hooks.get(event, []) if isinstance(hooks.get(event), list))
-        for event in events
+        event: isinstance(hooks.get(event), list) and any(_is_ours(g) for g in hooks[event]) for event in events
     }

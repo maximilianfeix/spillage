@@ -891,6 +891,10 @@ def _mixed(value: str) -> bool:
     return classes >= 2 and any(c.isdigit() for c in value)
 
 
+def _go_escaped(text: str) -> str:
+    return text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 class KnownValueRule(Rule):
     """Exact values you already know are secret, e.g. from your projects' .env files.
 
@@ -903,7 +907,9 @@ class KnownValueRule(Rule):
         self.values = dict(values)  # value -> label
         needles = set(self.values)
         for value in self.values:
-            needles.add(json.dumps(value, ensure_ascii=False)[1:-1])
+            for escaped in (json.dumps(value, ensure_ascii=False)[1:-1], json.dumps(value)[1:-1]):  # é as \u00e9
+                needles.add(escaped)
+                needles.add(_go_escaped(escaped))  # Go's encoding/json writes & < > as \u0026 \u003c \u003e
         # One pass over the text for all values. Longest first, so the JSON-escaped form of a
         # value wins over its raw form when both match at the same spot.
         ordered = sorted(needles, key=lambda n: (-len(n), n))

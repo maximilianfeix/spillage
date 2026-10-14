@@ -148,15 +148,26 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
-def write_in_place(path: Path, text: str) -> None:
+def write_in_place(path: Path, text: str, original: Optional[str] = None) -> None:
     """Overwrite the same inode instead of replacing the file.
 
     For files an agent may still hold open (Codex keeps its rollout file open for the whole
-    session): after a rename its later writes would go to the old, unlinked file."""
+    session): after a rename its later writes would go to the old, unlinked file.
+
+    With `original`, the text the redaction started from, the file is read once more right
+    before the write: what the agent appended in the meantime is kept behind the new text, and
+    a file that changed in any other way is left alone (OSError)."""
     path = path.resolve()
     st = path.stat()
     data = _encode(text)
     with open(path, "r+b") as fh:
+        if original is not None:
+            before = _encode(original)
+            now = fh.read()
+            if not now.startswith(before):
+                raise OSError(f"{path} changed while being scrubbed")
+            data += now[len(before) :]
+            fh.seek(0)
         fh.write(data)
         fh.truncate(len(data))
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
@@ -182,7 +193,10 @@ def scrub_file(
         return 0
     new, count = redact_text(text, targets, rules, is_json, doc=Source().document(path, text))
     if count and _still_valid(text, new, kind):
-        (write_in_place if in_place else write_atomic)(path, new)
+        if in_place:
+            write_in_place(path, new, original=text)
+        else:
+            write_atomic(path, new)
         return count
     return 0
 

@@ -34,7 +34,8 @@ def test_plugin_hooks_are_the_ones_guard_installs():
     claude = guard.get_agent("claude")
     assert set(hooks) == set(claude.events())
     assert hooks[claude.tool_event][0]["matcher"] == guard.TOOL_MATCHER
-    for event, name in zip(claude.events(), ("prompt", "tool", "session-end")):
+    assert hooks[claude.output_event][0]["matcher"] == hooks[claude.failure_event][0]["matcher"] == guard.OUTPUT_MATCHER
+    for event, name in claude.hooks().items():
         (hook,) = hooks[event][0]["hooks"]
         assert hook["command"].endswith(f'"${{CLAUDE_PLUGIN_ROOT}}/hooks/run.py" {name}; done')
 

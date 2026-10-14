@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Tuple
+from typing import Any, Iterator, Optional, Tuple
 
 # Keys whose values are opaque blobs: thinking signatures, encrypted reasoning, base64 media.
 # Scanning them only produces noise and costs time.
@@ -21,13 +21,15 @@ def _is_binary_block(node: dict) -> bool:
     )
 
 
-def iter_strings(node: Any, path: Path = ()) -> Iterator[Tuple[Path, str]]:
-    """Depth-first (path, string) pairs, in document order."""
+def iter_strings(node: Any, path: Path = (), max_string: Optional[int] = MAX_STRING) -> Iterator[Tuple[Path, str]]:
+    """Depth-first (path, string) pairs, in document order. Strings longer than `max_string` are
+    left out, which is right for running rules over them and wrong for finding the place of a
+    match that is already known: pass None there."""
     stack = [(path, node)]
     while stack:
         here, value = stack.pop()
         if isinstance(value, str):
-            if value and len(value) <= MAX_STRING:
+            if value and (max_string is None or len(value) <= max_string):
                 yield here, value
         elif isinstance(value, dict):
             if _is_binary_block(value):

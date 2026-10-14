@@ -49,6 +49,21 @@ class _FileState:
     first_line: Optional[str] = None  # only set once it's complete
 
 
+def _stamp(path: Path, st: os.stat_result) -> Tuple[int, int, float]:
+    """What shows that a file changed: inode, size and time of the last write. SQLite puts new
+    rows into `<name>-wal` first and into the database itself only at a checkpoint, so for a
+    database that file counts too."""
+    size, mtime = st.st_size, st.st_mtime
+    if path.suffix in DATABASE_SUFFIXES:
+        try:
+            wal = path.with_name(path.name + "-wal").stat()
+        except OSError:
+            pass
+        else:
+            size, mtime = size + wal.st_size, max(mtime, wal.st_mtime)
+    return st.st_ino, size, mtime
+
+
 def _last_line_end(path: Path, size: int) -> int:
     """Offset just past the last line break, so a half-written last line is read later."""
     with open(path, "rb") as fh:
@@ -96,19 +111,21 @@ class Watcher:
     # ---- startup ----------------------------------------------------------------------------
     def prime(self, baseline: bool = True) -> int:
         """Remember what's there now: every secret already in the logs, and where each file ends."""
-        if baseline:
-            result = Scanner(rules=self.rules).scan(self.sources)
-            self.baseline = {f.fingerprint for f in result.findings}
+        # where each file ends comes first: what an agent writes while the scan below runs is
+        # then read as new, instead of falling between the two
         for source, path in self._discover(force=True):
             try:
                 self.files[path] = self._state_now(source, path)
             except OSError:
                 continue
+        if baseline:
+            result = Scanner(rules=self.rules).scan(self.sources)
+            self.baseline = {f.fingerprint for f in result.findings}
         return len(self.files)
 
     def _state_now(self, source: Source, path: Path) -> _FileState:
         st = path.stat()
-        state = _FileState(source, st.st_ino, st.st_size, st.st_mtime)
+        state = _FileState(source, *_stamp(path, st))
         if kind_of(path) == "jsonl":
             state.offset = _last_line_end(path, st.st_size)
             state.tail = _read_range(path, max(0, state.offset - TAIL), state.offset)
@@ -150,14 +167,15 @@ class Watcher:
         state = self.files.get(path)
         if state is None:
             state = self.files[path] = _FileState(source)
-        if (st.st_ino, st.st_size, st.st_mtime) == (state.ino, state.size, state.mtime):
+        stamp = _stamp(path, st)
+        if stamp == (state.ino, state.size, state.mtime):
             return []
         if kind_of(path) == "jsonl":
             hits = self._appended(source, path, state, st.st_ino, st.st_size)
         else:
             text = source.load(path)
             hits = hits_in(source.document(path, text), text, self.rules) if text else []
-        state.ino, state.size, state.mtime = st.st_ino, st.st_size, st.st_mtime
+        state.ino, state.size, state.mtime = stamp
         return self._events(path, hits)
 
     def _appended(self, source: Source, path: Path, state: _FileState, ino: int, size: int) -> list:
