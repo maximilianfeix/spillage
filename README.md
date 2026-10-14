@@ -302,6 +302,21 @@ The config goes where each agent expects it: `~/.claude/settings.json`, `~/.code
 
 The hooks are a guard rail, not a sandbox. They stop the ways a key usually ends up in a conversation: the agent reads `.env` to "check the config", runs `printenv` to debug, or you paste a key. An agent that is set on reading a file will find a way the hooks don't know (`cp .env notes.txt`, then read that), so they don't replace keeping keys out of the folders your agent works in, and a real sandbox if you need one.
 
+What that means per agent, and when:
+
+| A key that… | Claude Code | Codex CLI | Gemini CLI |
+| --- | --- | --- | --- |
+| is in a prompt you send | **prevented**: blocked before it's sent; the blocked prompt is still written to the transcript and scrubbed at session end | **prevented** | **prevented** (documented hook format, not tried against a real install) |
+| a known command or file read would print (`cat .env`, `printenv`, `gh auth token`, …) | **prevented** | **prevented** | **prevented** (as above) |
+| a tool prints anyway (a config file, `curl -v`, an MCP server) | **redacted** before the model sees it | **detected after**: it reached the model; `spillage` finds it, session end scrubs it | **detected after** |
+| is in the output of a failed command | **detected after**, and you're told right away which kind of key to rotate | **detected after** | **detected after** |
+| leaves without going through the conversation (`curl -d @.env https://…`, a script that uploads it) | **not covered**: that is exfiltration, not a leak into the conversation; it needs a sandbox or network rules | **not covered** | **not covered** |
+| is built at run time (`cat $(echo .env)`, a file copied first and read under another name) | **redacted** by the tool output hook if it's a known key or one of your `.env` values | **detected after** | **detected after** |
+
+When a hook itself fails (a bug in spillage, an input too deeply nested to read), it doesn't let things through: the tool call is blocked and output it can't check is withheld, with a message saying so. A prompt still goes out in that case, with a warning, so a bug can't lock you out.
+
+Detection has limits of its own: a key spelled with escapes no serializer would use (`ghp_…`), split over several strings, or encoded (base64, hex) is not found. The values from your `.env` files are found in the spellings real logs use, including JSON escapes and Go's `&` for `&`.
+
 > [!NOTE]
 > Codex runs new hooks only after you've trusted them once: open Codex and run `/hooks`. Claude Code and Codex were tested end to end with their real CLIs; Gemini CLI follows its documented hook format.
 
